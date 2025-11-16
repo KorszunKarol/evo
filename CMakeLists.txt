@@ -218,6 +218,11 @@ target_link_libraries(sim_app PRIVATE
 
 add_executable(render_client
     client/src/main.cpp
+    client/src/terrain_textures.cpp
+)
+
+target_include_directories(render_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/client/include
 )
 
 target_link_libraries(render_client PRIVATE
@@ -275,4 +280,36 @@ target_compile_options(sim_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 include(GoogleTest)
 gtest_discover_tests(sim_tests)
+
+# Render client tests
+add_executable(render_client_tests
+    tests/client/test_render_fixtures.cpp
+    tests/client/test_shader.cpp
+    tests/client/test_mesh.cpp
+    tests/client/test_color_utils.cpp
+    tests/client/test_camera.cpp
+    tests/client/test_ecs_extraction.cpp
+    tests/client/test_instance_buffer.cpp
+    tests/client/test_terrain_shading.cpp
+    client/src/terrain_textures.cpp
+)
+
+target_link_libraries(render_client_tests PRIVATE
+    sim_core
+    GTest::gtest_main
+    glfw
+    glad
+    glm::glm
+)
+
+target_include_directories(render_client_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/client/src
+    ${CMAKE_SOURCE_DIR}/client/include
+)
+
+target_compile_options(render_client_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+# Skip render client tests if OpenGL is not available (e.g., in CI without display)
+# Tests will use GTEST_SKIP if OpenGL context creation fails
+gtest_discover_tests(render_client_tests)
 
