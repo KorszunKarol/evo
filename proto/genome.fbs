@@ -1,0 +1,127 @@
+// Copyright (c) 2025.
+// SPDX-License-Identifier: MIT
+
+namespace evolution.genome;
+
+enum ShapeType : ubyte { Sphere = 0, CapsuleY = 1, Box = 2 }
+enum BrainKind : ubyte { MLP = 0, NEAT = 1 }
+enum NodeType : ubyte { Input = 0, Hidden = 1, Output = 2 }
+enum Activation : ubyte { Linear = 0, Tanh = 1, Relu = 2, Sigmoid = 3 }
+
+table Vec3F {
+  x: float;
+  y: float;
+  z: float;
+}
+
+table Body {
+  shape: ShapeType;
+  size: Vec3F;          // sphere: x=radius; capsule: x=radius, y=halfHeight; box: half extents
+  mass_density: float;  // kg/m^3 equivalent
+  color: Vec3F;         // debug/render tint
+}
+
+table MLP {
+  input_count: uint32;
+  output_count: uint32;
+  hidden_layers: [uint32];  // e.g., [16, 16]
+  weights: [float];         // packed row-major for all layers
+  biases: [float];          // packed biases for all layers
+  update_rate_hz: float;    // controller update frequency
+}
+
+table NeatNode {
+  id: uint32;
+  type: NodeType;
+  bias: float;
+  act: Activation;
+}
+
+table NeatConn {
+  in: uint32;
+  out: uint32;
+  weight: float;
+  enabled: bool;
+  innovation: uint32;
+  recurrent: bool;
+}
+
+table NEAT {
+  input_count: uint32;
+  output_count: uint32;
+  nodes: [NeatNode];
+  conns: [NeatConn];
+  update_rate_hz: float;
+}
+
+table ModulePlasticity {
+  bias_coeffs: [float];
+  scale_coeffs: [float];
+  trace_gain: float = 0.0;
+  trace_decay: float = 0.0;
+}
+
+table BrainModule {
+  kind: BrainKind;
+  mlp: MLP;
+  neat: NEAT;
+  plasticity: ModulePlasticity;
+}
+
+table BrainGating {
+  context_size: uint32 = 0;
+  epsilon: float = 0.05;
+  mlp: MLP;
+}
+
+table PreferenceNet {
+  mlp: MLP;
+  trait_scale: float = 1.0;
+}
+
+table Mutator {
+  mutate_rate_struct: float = 0.05;
+  mutate_rate_param: float = 0.2;
+  weight_sigma: float = 0.2;
+  module_duplication_rate: float = 0.01;
+}
+
+table LifeStage {
+  age: float;
+  gate_multipliers: [float];
+  energy_scale: float = 1.0;
+  size_scale: float = 1.0;
+  reproduction_allowed: bool = true;
+}
+
+table TraitsCache {
+  mass: float;
+  basal_rate: float;
+  brain_cost: float;
+  brain_params: float;
+  module_count: uint16;
+  trait_latent: [float];
+}
+
+table Genome {
+  version: uint16;
+  id: uint64;
+  generation: uint32;
+  parents: [uint64];
+  rng_seed: uint64;
+  body: Body;
+  brain_kind: BrainKind;
+  mlp: MLP;
+  neat: NEAT;
+  modules: [BrainModule];
+  gating: BrainGating;
+  preference: PreferenceNet;
+  mutator: Mutator;
+  hotspots: [uint32];
+  life_stages: [LifeStage];
+  cached: TraitsCache;
+}
+
+root_type Genome;
+
+

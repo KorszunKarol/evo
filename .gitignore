@@ -1,0 +1,182 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+bin/
+lib/
+*.a
+*.so
+*.dylib
+*.dll
+
+# Compiled Object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+# Executables
+*.exe
+*.out
+*.app
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+*.cmake
+!CMakeLists.txt
+
+# Generated files
+# FlatBuffers generated code (if not committed)
+# build/generated/
+
+# GLAD generated files (if not committed)
+# build/_deps/glad-build/include/glad/
+# build/_deps/glad-build/src/
+
+# IDE - Visual Studio Code
+.vscode/
+*.code-workspace
+.vs/
+
+# IDE - Cursor
+.cursor/
+
+# IDE - CLion
+.idea/
+cmake-build-*/
+
+# IDE - Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# IDE - Qt Creator
+*.pro.user
+*.pro.user.*
+
+# IDE - Eclipse
+.project
+.classpath
+.cproject
+.settings/
+
+# IDE - NetBeans
+nbproject/
+
+# Editor backups
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# OS-specific
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ImGui
+imgui.ini
+*.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# Coverage reports
+*.gcov
+*.gcda
+*.gcno
+coverage/
+*.info
+
+# Profiling data
+*.prof
+gmon.out
+perf.data*
+
+# Package files
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# Python (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# Test artifacts
+test-results/
+*.test
+
+# Asset cache (if downloading textures/assets)
+assets/.cache/
+assets/temp/
+
+# Personal notes/todos (optional - uncomment if you want to ignore)
+# TODO.md
+# NOTES.md
+
+# Chat logs and development artifacts
+previous_chats/
+

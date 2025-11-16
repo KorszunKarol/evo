@@ -1,0 +1,23 @@
+cc_library(
+    name = "sim_core",
+    srcs = [
+        "src/physics_system.cpp",
+        "src/scheduler.cpp",
+        "src/simulation_app.cpp",
+    ],
+    hdrs = glob(["include/**/*.h"]),
+    includes = ["include"],
+    copts = ["-std=c++20"],
+    deps = [
+        "@entt//:entt",
+        "@spdlog//:spdlog",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "sim_app",
+    srcs = ["src/main.cpp"],
+    copts = ["-std=c++20"],
+    deps = [":sim_core"],
+)
