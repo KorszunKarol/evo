@@ -176,6 +176,7 @@ add_dependencies(sim_genetics genome_schema_codegen)
 # Simulation library
 add_library(sim_core
     sim/src/scheduler.cpp
+    sim/src/multi_rate_scheduler.cpp
     sim/src/simulation_app.cpp
     sim/src/physics_system.cpp
     sim/src/metabolism_system.cpp
@@ -256,6 +257,7 @@ enable_testing()
 add_executable(sim_tests
     tests/physics/test_narrow_phase.cpp
     tests/physics/test_simple_backend.cpp
+    tests/sim/test_fixed_point.cpp
     tests/genetics/test_trait_extraction.cpp
     tests/genetics/test_compatibility_distance.cpp
     tests/genetics/test_mutation_crossover.cpp
