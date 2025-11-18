@@ -186,6 +186,7 @@ add_library(sim_core
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
+    sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
     sim/src/environment/feeding_system.cpp
     sim/src/fitness_update_system.cpp
@@ -258,6 +259,7 @@ add_executable(sim_tests
     tests/physics/test_narrow_phase.cpp
     tests/physics/test_simple_backend.cpp
     tests/sim/test_fixed_point.cpp
+    tests/sim/test_soil_volume.cpp
     tests/genetics/test_trait_extraction.cpp
     tests/genetics/test_compatibility_distance.cpp
     tests/genetics/test_mutation_crossover.cpp
