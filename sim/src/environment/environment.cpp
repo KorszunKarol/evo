@@ -168,12 +168,16 @@ SoilGrid::SoilGrid(const SoilConfig& config)
       scratch_(nutrients_) {}
 
 float SoilGrid::sample(double x, double z) const noexcept {
+    if (!std::isfinite(x) || !std::isfinite(z) || nutrients_.empty()) {
+        return config_.baseline_nutrient;
+    }
+
     const double fx = std::clamp(x * inv_cell_size_, 0.0, static_cast<double>(width_ - 1));
     const double fz = std::clamp(z * inv_cell_size_, 0.0, static_cast<double>(height_ - 1));
     const int ix0 = static_cast<int>(std::floor(fx));
     const int iz0 = static_cast<int>(std::floor(fz));
-    const int ix1 = ix0 + 1;
-    const int iz1 = iz0 + 1;
+    const int ix1 = std::min(ix0 + 1, width_ - 1);
+    const int iz1 = std::min(iz0 + 1, height_ - 1);
     const double sx = fx - static_cast<double>(ix0);
     const double sz = fz - static_cast<double>(iz0);
     const float n00 = at(ix0, iz0);
