@@ -13,8 +13,14 @@ void MetabolismSystem::tick(SimulationContext& context) {
 
     auto view = registry.view<MetabolismComponent>();
     view.each([&](const entt::entity entity, MetabolismComponent& metabolism) {
+        const double energy_loss = metabolism.basal_rate * dt;
         if (dt > 0.0 && metabolism.basal_rate != 0.0) {
-            metabolism.energy -= metabolism.basal_rate * dt;
+            metabolism.energy -= energy_loss;
+            
+            // Telemetry: track metabolism energy loss
+            if (auto* telem = registry.try_get<TelemetryComponent>(entity)) {
+                telem->total_energy_lost_metabolism += energy_loss;
+            }
         }
 
         if (metabolism.energy > metabolism.max_energy) {
@@ -34,6 +40,14 @@ void MetabolismSystem::tick(SimulationContext& context) {
 
     for (const auto entity : recycle_bin_) {
         if (registry.valid(entity)) {
+            // Determine death cause before destruction
+            if (auto* telem = registry.try_get<TelemetryComponent>(entity)) {
+                if (telem->killed_by_predation) {
+                    telem->death_cause = DeathCause::Predation;
+                } else {
+                    telem->death_cause = DeathCause::Starvation;
+                }
+            }
             registry.destroy(entity);
         }
     }

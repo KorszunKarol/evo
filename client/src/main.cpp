@@ -23,6 +23,7 @@
 #include <entt/entt.hpp>
 
 #include "evolution/client/terrain_textures.h"
+#include "evolution/client/soil_debug_renderer.h"
 #include "evolution/genetics/genome_storage.h"
 #include "evolution/sim/components.h"
 #include "evolution/sim/environment/environment.h"
@@ -93,6 +94,7 @@ struct RenderToggles {
     bool show_agents{true};
     bool show_plants{true};
     bool show_energy_overlay{false};
+    bool show_soil_debug{false};
     float energy_overlay_strength{0.6F};
     bool enable_triplanar{true};
     bool enable_normal_maps{true};
@@ -729,6 +731,17 @@ void handle_hotkeys(GLFWwindow* window, TimeControls& time_controls,
     handle_press(glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS, latch.biome_overlay, [&] {
         toggles.show_biome_overlay = !toggles.show_biome_overlay;
     });
+
+    // Toggle Soil Debug with F1
+    static bool f1_latch = false;
+    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS) {
+        if (!f1_latch) {
+            toggles.show_soil_debug = !toggles.show_soil_debug;
+            f1_latch = true;
+        }
+    } else {
+        f1_latch = false;
+    }
 }
 
 struct FrameTimings {
@@ -772,6 +785,7 @@ void draw_simulation_hud(TimeControls& time_controls,
     ImGui::Checkbox("Show Water", &toggles.show_water);
     ImGui::Checkbox("Show Agents", &toggles.show_agents);
     ImGui::Checkbox("Show Plants", &toggles.show_plants);
+    ImGui::Checkbox("Show Soil Debug (F1)", &toggles.show_soil_debug);
     ImGui::Checkbox("Energy Overlay", &toggles.show_energy_overlay);
     if (toggles.show_energy_overlay) {
         ImGui::SliderFloat("Overlay Strength", &toggles.energy_overlay_strength, 0.0F, 1.0F);
@@ -1230,6 +1244,10 @@ void main() {
     plants.mesh = create_cylinder_mesh();
     plants.instances = create_instance_buffer(plants.mesh.vao);
 
+    client::SoilDebugRenderer soil_renderer{};
+    std::vector<client::SoilVoxelInstance> soil_instances;
+
+
     OrbitCamera camera{};
     camera.target = glm::vec3(static_cast<float>(terrain.width() * terrain.cell_size() * 0.5),
                               static_cast<float>((terrain.min_y() + terrain.max_y()) * 0.5),
@@ -1282,6 +1300,11 @@ void main() {
             ++ticks_this_frame;
         }
         const auto sim_end = std::chrono::steady_clock::now();
+
+        // DEBUG: Trace execution
+        if (ticks_this_frame > 0 && (timings.ticks % 60 == 0)) {
+           spdlog::info("Tick completed. Sim time: {:.2f}", app.simulation_time());
+        }
 
         evo::update_environment_stats(registry);
         const auto* env_stats = registry.ctx().find<evo::EnvironmentStats>();
@@ -1398,6 +1421,19 @@ void main() {
             glDrawElementsInstanced(GL_TRIANGLES, plants.mesh.index_count, GL_UNSIGNED_INT,
                                     nullptr, static_cast<GLsizei>(plant_instances.size()));
             glBindVertexArray(0);
+        }
+
+        if (toggles.show_soil_debug) {
+            spdlog::debug("Starting soil debug render");
+            if (const auto* volume = registry.ctx().find<evo::SoilVolume>()) {
+                // DEBUG: Check volume
+                // spdlog::debug("Soil volume: {}x{}x{}", volume->width(), volume->height(), volume->depth());
+                client::extract_soil_voxels(*volume, soil_instances, 0.1F);
+                spdlog::debug("Extracted {} soil instances", soil_instances.size());
+                soil_renderer.upload_instances(soil_instances);
+                soil_renderer.render(view, projection);
+            }
+            spdlog::debug("Finished soil debug render");
         }
 
         ImGui_ImplOpenGL3_NewFrame();

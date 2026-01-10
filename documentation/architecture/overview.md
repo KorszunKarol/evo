@@ -68,9 +68,13 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `PlantSeedParams`: Plant reproduction parameters
    - `FeedingIntent`: Herbivore feeding behavior
    - `HerbivoreTag`: Herbivore marker
+   - `CarnivoreTag`: Carnivore marker
+   - `DietComponent`: Diet type (Herbivore/Carnivore/Omnivore)
+   - `CombatComponent`: Attack cooldowns and pursuit state
    - `BrainComponent`: Neural controller metadata
-   - `ActuationComponent`: Brain output commands
+   - `ActuationComponent`: Brain output commands (impulse, jump, eat, attack)
    - `ReproductionComponent`: Reproduction cooldown and policy
+   - `TelemetryComponent`: Tracking kills, deaths, energy gained
 
 3. **sim/physics** - Physics backends and pipeline
    - `physics_system.h/.cpp`: System façade delegating to backends
@@ -183,6 +187,29 @@ The environment module provides a living world with terrain, soil nutrients, pla
 - Herbivores consume nearby plants
 - Energy transferred from `PlantComponent` to `MetabolismComponent`
 - Spatial queries via `PlantSpatialIndex` for efficiency
+
+**Predator-Prey System**:
+- Carnivores require brain-controlled attack intent (`ActuationComponent.attack`)
+- `CombatComponent` tracks attack cooldowns and pursuit state
+- Carnivores drain energy from herbivores on successful attacks
+- Energy transferred from prey's `MetabolismComponent` to predator's
+- Attack success gated by:
+  - `AttackIntent` from brain evolution
+  - Attack cooldown timer
+  - Reach distance from genome (`attack_reach`)
+- Kills tracked in `TelemetryComponent.kill_count`
+- Deaths from predation recorded as `DeathCause::Predation`
+- Diet encoded in genome (`DietPreference` enum)
+- Diet mutation rate ~1% creates occasional diet flips
+- Diet distance penalty in speciation encourages reproductive isolation
+
+### Spawn Workflow
+
+- **Step 1 – Entity Creation**: Gameplay code creates an `entt::entity` and immediately assigns a `TransformComponent` containing the desired spawn pose.
+- **Step 2 – Genome Binding**: Call `PhenotypeBuilder::build()` with the genome id and entity. The builder now preserves any pre-existing `TransformComponent` so the spawn pose survives the build. When no transform exists, it emplaces one at the origin.
+- **Step 3 – Post-Build Systems**: Newly created entities already contain deterministic components (metabolism, brain, reproduction, etc.) and can immediately participate in standard system ticks.
+
+This workflow ensures spawn systems own spatial placement while the phenotype builder owns the deterministic component graph.
 
 ## Extension Points
 

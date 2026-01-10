@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <entt/entt.hpp>
+
 #include "evolution/sim/math_types.h"
 
 namespace evolution::sim {
@@ -137,6 +139,42 @@ struct RigidbodyComponent {
 };
 
 ///
+/// @brief Enumerates supported joint constraint types.
+///
+enum class JointType : std::uint8_t {
+    Fixed,      ///< Locks relative position and rotation.
+    Hinge,      ///< Allows rotation around a single axis.
+    Spherical   ///< Allows rotation around a pivot point (ball-and-socket).
+};
+
+///
+/// @brief Defines a physical constraint connecting two entities.
+///
+/// @note The solver uses this to apply corrective impulses or forces to maintain the constraint.
+/// @warning Entities referenced must have valid Transform and Kinematics components.
+///
+struct JointComponent {
+    /// @brief The parent entity in the kinematic chain.
+    entt::entity parent{entt::null};
+    /// @brief The child entity in the kinematic chain.
+    entt::entity child{entt::null};
+    /// @brief Anchor point in parent's local space.
+    Vec3 local_anchor_parent{0.0, 0.0, 0.0};
+    /// @brief Anchor point in child's local space.
+    Vec3 local_anchor_child{0.0, 0.0, 0.0};
+    /// @brief Axis of rotation in parent's local space (for Hinge).
+    Vec3 axis_parent{1.0, 0.0, 0.0};
+    /// @brief Axis of rotation in child's local space (for Hinge).
+    Vec3 axis_child{1.0, 0.0, 0.0};
+    /// @brief Constraint type.
+    JointType type{JointType::Fixed};
+    /// @brief Angular limits in radians (x=min, y=max).
+    Vec3 limits{0.0, 0.0, 0.0};
+    /// @brief Current angle/state for sensors (radians).
+    double current_angle{0.0};
+};
+
+///
 /// @brief Represents an edible plant organism that accumulates energy over time.
 ///
 /// @details Plants consume nutrients from the soil grid to increase their energy reserves. When
@@ -198,6 +236,35 @@ struct FeedingIntent {
 /// @brief Empty tag component marking herbivorous entities.
 ///
 struct HerbivoreTag {};
+
+///
+/// @brief Empty tag component marking carnivorous entities.
+///
+struct CarnivoreTag {};
+
+/**
+ * @brief Combat state for predator entities.
+ * 
+ * Tracks attack cooldowns/timers and pursuit state for carnivore combat
+ * mechanics. Used by the FeedingSystem to gate attack frequency and by
+ * the brain to determine hunting state.
+ * 
+ * @complexity O(1) per tick update.
+ * @note Attack timer decrements each tick; attack only allowed when timer <= 0.
+ * @threadsafe @notthreadsafe Updates expected on main simulation thread.
+ */
+struct CombatComponent {
+    /// @brief Duration between attack attempts (seconds).
+    double attack_cooldown{1.0};
+    /// @brief Time remaining before next attack is permitted (seconds).
+    double attack_timer{0.0};
+    /// @brief Current attack target entity handle.
+    entt::entity target{entt::null};
+    /// @brief Whether the predator is actively pursuing prey.
+    bool pursuing{false};
+    /// @brief Total damage dealt during current pursuit.
+    double damage_dealt{0.0};
+};
 
 ///
 /// @brief Tracks the energetic state of an entity.
@@ -272,6 +339,8 @@ struct ActuationComponent {
     bool jump{false};
     /// @brief Request to perform feeding behaviour if available.
     bool eat{false};
+    /// @brief Request to attack nearby prey (carnivores only).
+    bool attack{false};
     /// @brief Brain-controlled throttle for skipping updates (frames).
     int update_skip{0};
 };
@@ -355,6 +424,95 @@ struct ReproductionComponent {
     double mate_radius{3.0};
     /// @brief Minimum energy required to initiate reproduction.
     double energy_threshold{120.0};
+};
+
+///
+/// @brief Enumerates entity types detectable by vision raycasting.
+///
+enum class VisionHitType : std::uint8_t {
+    None = 0,      ///< No hit within range.
+    Terrain = 1,   ///< Terrain/heightfield hit.
+    Plant = 2,     ///< Plant entity hit.
+    Herbivore = 3, ///< Herbivore agent hit.
+    Carnivore = 4, ///< Carnivore agent hit.
+    Unknown = 5    ///< Entity without recognizable tag.
+};
+
+///
+/// @brief Enumerates supported diet types for entities.
+///
+enum class DietType : std::uint8_t {
+    Herbivore = 0, ///< Consumes plants.
+    Carnivore = 1  ///< Consumes other entities.
+};
+
+///
+/// @brief Defines the feeding behaviour of an entity.
+///
+struct DietComponent {
+    /// @brief The primary diet type.
+    DietType type{DietType::Herbivore};
+};
+
+/**
+ * @brief Raycast-based spatial sensing component for agent vision.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(ray_count) per tick for raycasting.
+ * @note Updated by VisionSystem before BrainInferenceSystem runs.
+ * @warning ray_results and ray_types vectors resize to ray_count.
+ * @threadsafe @notthreadsafe Updates expected on main simulation thread.
+ */
+struct VisionComponent {
+    /// @brief Field of view in radians (symmetric around heading).
+    float fov_radians{1.57f};
+    /// @brief Number of rays to cast per update.
+    std::uint8_t ray_count{5};
+    /// @brief Maximum vision range in meters.
+    float max_range{10.0f};
+    /// @brief Enable/disable vision sensing.
+    bool enabled{true};
+    /// @brief Normalized ray distances [0=contact, 1=max_range].
+    std::vector<float> ray_distances{};
+    /// @brief Entity type detected by each ray.
+    std::vector<VisionHitType> ray_hit_types{};
+    /// @brief Entities hit by each ray (entt::null if terrain or miss).
+    std::vector<entt::entity> ray_hit_entities{};
+};
+
+///
+/// @brief Enumerates causes of agent death for telemetry analysis.
+///
+enum class DeathCause : std::uint8_t {
+    Unknown = 0,    ///< Default, cause not determined.
+    Starvation = 1, ///< Energy depleted via metabolism.
+    Predation = 2,  ///< Energy drained to zero by a carnivore.
+    OldAge = 3      ///< Future: lifespan limit reached.
+};
+
+/**
+ * @brief Per-agent lifetime telemetry for analysis and debugging.
+ * @note Updated by relevant systems (Feeding, Metabolism, Movement).
+ * @complexity O(1) per update.
+ */
+struct TelemetryComponent {
+    /// @brief Total energy gained from feeding (plants or prey).
+    double total_energy_gained{0.0};
+    /// @brief Total energy lost to metabolism.
+    double total_energy_lost_metabolism{0.0};
+    /// @brief Total energy lost to movement (future).
+    double total_energy_lost_movement{0.0};
+    /// @brief Total distance traveled in meters.
+    double distance_traveled{0.0};
+    /// @brief Number of successful feeding events.
+    std::uint32_t successful_feeds{0};
+    /// @brief Number of kills (carnivores only).
+    std::uint32_t kill_count{0};
+    /// @brief Cause of death (set just before destruction).
+    DeathCause death_cause{DeathCause::Unknown};
+    /// @brief Flag set by FeedingSystem when this entity is being killed by predation.
+    bool killed_by_predation{false};
 };
 
 }  // namespace evolution::sim

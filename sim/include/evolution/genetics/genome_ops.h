@@ -13,6 +13,8 @@
 
 namespace evolution::genetics {
 
+class InnovationDatabase;
+
 /**
  * @brief Configuration parameters controlling stochastic genetic operations.
  * @param None.
@@ -48,6 +50,24 @@ struct ReproConfig {
 [[nodiscard]] evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
                                                 const ReproConfig& config,
                                                 std::uint64_t seed) noexcept;
+
+/**
+ * @brief Apply mutation with structural topology changes.
+ * @param genome Source genome object (consumed by value).
+ * @param config Mutation configuration parameters.
+ * @param seed Deterministic seed for RNG.
+ * @param innovations Innovation database for structural mutations (required for NEAT topology changes).
+ * @return Mutated genome object.
+ * @throws None.
+ * @complexity O(N² + C) where N = node count, C = connection count.
+ * @note Enables AddNode/AddConnection mutations when innovations is non-null.
+ * @warning Modifies topology; crossover compatibility depends on innovation tracking.
+ * @threadsafe @notthreadsafe.
+ */
+[[nodiscard]] evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
+                                                const ReproConfig& config,
+                                                std::uint64_t seed,
+                                                InnovationDatabase& innovations) noexcept;
 
 /**
  * @brief Combine two parent genomes using deterministic crossover.

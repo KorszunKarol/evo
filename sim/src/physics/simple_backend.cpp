@@ -82,6 +82,7 @@ void SimplePhysicsBackend::step(entt::registry& registry, double dt) {
                                registry,
                                config_.core.baumgarte,
                                config_.core.penetration_slop);
+    solve_joint_constraints(registry, dt);
     dispatch_contact_events();
 
     // Refresh lookup positions after integration for next tick.
@@ -95,9 +96,191 @@ void SimplePhysicsBackend::step(entt::registry& registry, double dt) {
 std::optional<IPhysicsBackend::ContactEvent> SimplePhysicsBackend::raycast(const Vec3& origin,
                                                                            const Vec3& direction,
                                                                            double max_distance) const {
-    (void)origin;
-    (void)direction;
-    (void)max_distance;
+    auto dot = [](const Vec3& a, const Vec3& b) -> double {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    };
+
+    auto normalize = [&dot](const Vec3& v) -> Vec3 {
+        const double len = std::sqrt(dot(v, v));
+        if (len < 1e-9) {
+            return Vec3{0.0, 0.0, 1.0};
+        }
+        return Vec3{v.x / len, v.y / len, v.z / len};
+    };
+
+    const Vec3 dir = normalize(direction);
+    double best_t = max_distance + 1.0;
+    ContactEvent best_hit{};
+    bool found = false;
+
+    for (const auto& body : bodies_) {
+        if (!body.collider || !body.transform) {
+            continue;
+        }
+
+        const Vec3 pos = body.transform->position + body.collider->offset;
+        double t = max_distance + 1.0;
+        Vec3 hit_normal{0.0, 1.0, 0.0};
+
+        switch (body.collider->type) {
+            case ShapeType::Sphere: {
+                const double r = body.collider->sphere.radius;
+                const Vec3 oc = origin - pos;
+                const double a = dot(dir, dir);
+                const double b = 2.0 * dot(oc, dir);
+                const double c = dot(oc, oc) - r * r;
+                const double discriminant = b * b - 4.0 * a * c;
+                if (discriminant >= 0.0) {
+                    const double sqrt_disc = std::sqrt(discriminant);
+                    double t0 = (-b - sqrt_disc) / (2.0 * a);
+                    double t1 = (-b + sqrt_disc) / (2.0 * a);
+                    if (t0 > 0.0 && t0 < t) {
+                        t = t0;
+                    } else if (t1 > 0.0 && t1 < t) {
+                        t = t1;
+                    }
+                    if (t <= max_distance) {
+                        Vec3 hit_point = origin + dir * t;
+                        hit_normal = normalize(hit_point - pos);
+                    }
+                }
+                break;
+            }
+            case ShapeType::Aabb: {
+                const Vec3 half = body.collider->aabb.half_extents;
+                const Vec3 box_min = pos - half;
+                const Vec3 box_max = pos + half;
+                double tmin = -1e18;
+                double tmax = 1e18;
+                int hit_axis = 0;
+                bool valid = true;
+                for (int axis = 0; axis < 3; ++axis) {
+                    double o = (axis == 0) ? origin.x : ((axis == 1) ? origin.y : origin.z);
+                    double d = (axis == 0) ? dir.x : ((axis == 1) ? dir.y : dir.z);
+                    double bmin = (axis == 0) ? box_min.x : ((axis == 1) ? box_min.y : box_min.z);
+                    double bmax = (axis == 0) ? box_max.x : ((axis == 1) ? box_max.y : box_max.z);
+                    if (std::abs(d) < 1e-9) {
+                        if (o < bmin || o > bmax) {
+                            valid = false;
+                            break;
+                        }
+                    } else {
+                        double t1 = (bmin - o) / d;
+                        double t2 = (bmax - o) / d;
+                        if (t1 > t2) {
+                            std::swap(t1, t2);
+                        }
+                        if (t1 > tmin) {
+                            tmin = t1;
+                            hit_axis = axis;
+                        }
+                        tmax = std::min(tmax, t2);
+                        if (tmin > tmax || tmax < 0.0) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                if (valid && tmin > 0.0 && tmin < t) {
+                    t = tmin;
+                    hit_normal = Vec3{0.0, 0.0, 0.0};
+                    double* n = (hit_axis == 0) ? &hit_normal.x : ((hit_axis == 1) ? &hit_normal.y : &hit_normal.z);
+                    double d_comp = (hit_axis == 0) ? dir.x : ((hit_axis == 1) ? dir.y : dir.z);
+                    *n = (d_comp > 0.0) ? -1.0 : 1.0;
+                }
+                break;
+            }
+            case ShapeType::CapsuleY: {
+                const double r = body.collider->capsule.radius;
+                const double hh = body.collider->capsule.half_height;
+                const Vec3 cap_top = Vec3{pos.x, pos.y + hh, pos.z};
+                const Vec3 cap_bot = Vec3{pos.x, pos.y - hh, pos.z};
+                const Vec3 oc = origin - cap_bot;
+                const Vec3 seg_dir = cap_top - cap_bot;
+                const double seg_len = 2.0 * hh;
+                const double dir_dot_seg = dot(dir, seg_dir);
+                const double oc_dot_seg = dot(oc, seg_dir);
+                const double seg_sq = seg_len * seg_len;
+                const double a = dot(dir, dir) - (dir_dot_seg * dir_dot_seg) / seg_sq;
+                const double b = 2.0 * (dot(oc, dir) - (oc_dot_seg * dir_dot_seg) / seg_sq);
+                const double c = dot(oc, oc) - (oc_dot_seg * oc_dot_seg) / seg_sq - r * r;
+                const double discriminant = b * b - 4.0 * a * c;
+                double cyl_t = max_distance + 1.0;
+                if (discriminant >= 0.0 && std::abs(a) > 1e-9) {
+                    const double sqrt_disc = std::sqrt(discriminant);
+                    double t0 = (-b - sqrt_disc) / (2.0 * a);
+                    if (t0 > 0.0) {
+                        Vec3 hit_pt = origin + dir * t0;
+                        double proj = dot(hit_pt - cap_bot, seg_dir) / seg_sq;
+                        if (proj >= 0.0 && proj <= 1.0) {
+                            cyl_t = t0;
+                        }
+                    }
+                }
+                for (const Vec3& sphere_center : {cap_top, cap_bot}) {
+                    const Vec3 oc_s = origin - sphere_center;
+                    const double a_s = dot(dir, dir);
+                    const double b_s = 2.0 * dot(oc_s, dir);
+                    const double c_s = dot(oc_s, oc_s) - r * r;
+                    const double disc_s = b_s * b_s - 4.0 * a_s * c_s;
+                    if (disc_s >= 0.0) {
+                        const double sqrt_d = std::sqrt(disc_s);
+                        double t_s = (-b_s - sqrt_d) / (2.0 * a_s);
+                        if (t_s > 0.0 && t_s < cyl_t) {
+                            cyl_t = t_s;
+                        }
+                    }
+                }
+                if (cyl_t <= max_distance && cyl_t < t) {
+                    t = cyl_t;
+                    Vec3 hit_pt = origin + dir * t;
+                    double proj = dot(hit_pt - cap_bot, seg_dir) / seg_sq;
+                    proj = std::clamp(proj, 0.0, 1.0);
+                    Vec3 closest_on_axis = cap_bot + seg_dir * proj;
+                    hit_normal = normalize(hit_pt - closest_on_axis);
+                }
+                break;
+            }
+        }
+
+        if (t > 0.0 && t <= max_distance && t < best_t) {
+            best_t = t;
+            best_hit.entity_a = entt::null;
+            best_hit.entity_b = body.entity;
+            best_hit.point = origin + dir * t;
+            best_hit.normal = hit_normal;
+            best_hit.penetration = 0.0;
+            best_hit.begin = true;
+            found = true;
+        }
+    }
+
+    if (terrain_ != nullptr) {
+        constexpr int kMaxSteps = 64;
+        const double step_size = max_distance / static_cast<double>(kMaxSteps);
+        for (int i = 1; i <= kMaxSteps; ++i) {
+            const double t_sample = step_size * static_cast<double>(i);
+            const Vec3 sample_pt = origin + dir * t_sample;
+            const double terrain_y = terrain_->height(sample_pt.x, sample_pt.z);
+            if (sample_pt.y <= terrain_y) {
+                if (t_sample < best_t) {
+                    best_t = t_sample;
+                    best_hit.entity_a = entt::null;
+                    best_hit.entity_b = entt::null;
+                    best_hit.point = sample_pt;
+                    best_hit.normal = terrain_->normal(sample_pt.x, sample_pt.z);
+                    best_hit.penetration = terrain_y - sample_pt.y;
+                    best_hit.begin = true;
+                    found = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if (found) {
+        return best_hit;
+    }
     return std::nullopt;
 }
 

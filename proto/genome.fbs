@@ -8,17 +8,41 @@ enum BrainKind : ubyte { MLP = 0, NEAT = 1 }
 enum NodeType : ubyte { Input = 0, Hidden = 1, Output = 2 }
 enum Activation : ubyte { Linear = 0, Tanh = 1, Relu = 2, Sigmoid = 3 }
 
+/// Dietary preference that determines what entities can be consumed for energy.
+enum DietPreference : ubyte { 
+  /// Consumes plants only.
+  Herbivore = 0,
+  /// Consumes other creatures only.
+  Carnivore = 1,
+  /// Can consume both (future: reduced efficiency).
+  Omnivore = 2
+}
+
 table Vec3F {
   x: float;
   y: float;
   z: float;
 }
 
-table Body {
+enum JointType : ubyte { Fixed = 0, Hinge = 1, Spherical = 2 }
+
+table Joint {
+  type: JointType;
+  axis: Vec3F;          // Local axis for hinge
+  limits: Vec3F;        // x=min, y=max (radians)
+  anchor: Vec3F;        // Local anchor position relative to child
+}
+
+table BodyNode {
   shape: ShapeType;
   size: Vec3F;          // sphere: x=radius; capsule: x=radius, y=halfHeight; box: half extents
   mass_density: float;  // kg/m^3 equivalent
   color: Vec3F;         // debug/render tint
+  
+  // Articulation
+  children: [BodyNode];
+  joint_to_parent: Joint;
+  transform: Vec3F;     // Relative position to parent (rotation assumed identity for MVP or added later)
 }
 
 table MLP {
@@ -109,7 +133,7 @@ table Genome {
   generation: uint32;
   parents: [uint64];
   rng_seed: uint64;
-  body: Body;
+  body: BodyNode;
   brain_kind: BrainKind;
   mlp: MLP;
   neat: NEAT;
@@ -120,6 +144,15 @@ table Genome {
   hotspots: [uint32];
   life_stages: [LifeStage];
   cached: TraitsCache;
+  
+  /// Dietary preference determining feeding behavior.
+  diet: DietPreference = Herbivore;
+  /// Attack reach for carnivores (meters).
+  attack_reach: float = 1.5;
+  /// Energy drain rate when attacking prey (energy/second).
+  attack_power: float = 8.0;
+  /// Movement speed multiplier (1.0 = baseline).
+  speed_trait: float = 1.0;
 }
 
 root_type Genome;

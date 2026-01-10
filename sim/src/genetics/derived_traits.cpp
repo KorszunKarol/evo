@@ -10,60 +10,82 @@ namespace {
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
 
-[[nodiscard]] double ExtractVolume(const evolution::genome::Body& body) noexcept {
+[[nodiscard]] double ExtractVolume(const evolution::genome::BodyNode& body) noexcept {
+    double volume = 0.0;
     const auto* size = body.size();
-    if (size == nullptr) {
-        return 1.0;
-    }
-    const double x = static_cast<double>(size->x());
-    const double y = static_cast<double>(size->y());
-    const double z = static_cast<double>(size->z());
+    if (size != nullptr) {
+        const double x = static_cast<double>(size->x());
+        const double y = static_cast<double>(size->y());
+        const double z = static_cast<double>(size->z());
 
-    switch (body.shape()) {
-        case evolution::genome::ShapeType::Sphere: {
-            const double radius = std::max(0.05, x);
-            return (4.0 / 3.0) * kPi * radius * radius * radius;
+        switch (body.shape()) {
+            case evolution::genome::ShapeType::Sphere: {
+                const double radius = std::max(0.05, x);
+                volume = (4.0 / 3.0) * kPi * radius * radius * radius;
+                break;
+            }
+            case evolution::genome::ShapeType::CapsuleY: {
+                const double radius = std::max(0.05, x);
+                const double half_height = std::max(0.05, y);
+                const double cylinder_height = 2.0 * half_height;
+                const double sphere_volume = (4.0 / 3.0) * kPi * radius * radius * radius;
+                const double cylinder_volume = kPi * radius * radius * cylinder_height;
+                volume = sphere_volume + cylinder_volume;
+                break;
+            }
+            case evolution::genome::ShapeType::Box:
+            default:
+                volume = 8.0 * std::max(0.05, x) * std::max(0.05, y) * std::max(0.05, z);
+                break;
         }
-        case evolution::genome::ShapeType::CapsuleY: {
-            const double radius = std::max(0.05, x);
-            const double half_height = std::max(0.05, y);
-            const double cylinder_height = 2.0 * half_height;
-            const double sphere_volume = (4.0 / 3.0) * kPi * radius * radius * radius;
-            const double cylinder_volume = kPi * radius * radius * cylinder_height;
-            return sphere_volume + cylinder_volume;
-        }
-        case evolution::genome::ShapeType::Box:
-        default:
-            return 8.0 * std::max(0.05, x) * std::max(0.05, y) * std::max(0.05, z);
     }
+    
+    if (const auto* children = body.children()) {
+        for (const auto* child : *children) {
+            if (child) {
+                volume += ExtractVolume(*child);
+            }
+        }
+    }
+    return volume;
 }
 
-[[nodiscard]] double ExtractVolume(const evolution::genome::BodyT& body) noexcept {
+[[nodiscard]] double ExtractVolume(const evolution::genome::BodyNodeT& body) noexcept {
+    double volume = 0.0;
     const auto* size = body.size.get();
-    if (size == nullptr) {
-        return 1.0;
-    }
-    const double x = static_cast<double>(size->x);
-    const double y = static_cast<double>(size->y);
-    const double z = static_cast<double>(size->z);
+    if (size != nullptr) {
+        const double x = static_cast<double>(size->x);
+        const double y = static_cast<double>(size->y);
+        const double z = static_cast<double>(size->z);
 
-    switch (body.shape) {
-        case evolution::genome::ShapeType::Sphere: {
-            const double radius = std::max(0.05, x);
-            return (4.0 / 3.0) * kPi * radius * radius * radius;
+        switch (body.shape) {
+            case evolution::genome::ShapeType::Sphere: {
+                const double radius = std::max(0.05, x);
+                volume = (4.0 / 3.0) * kPi * radius * radius * radius;
+                break;
+            }
+            case evolution::genome::ShapeType::CapsuleY: {
+                const double radius = std::max(0.05, x);
+                const double half_height = std::max(0.05, y);
+                const double cylinder_height = 2.0 * half_height;
+                const double sphere_volume = (4.0 / 3.0) * kPi * radius * radius * radius;
+                const double cylinder_volume = kPi * radius * radius * cylinder_height;
+                volume = sphere_volume + cylinder_volume;
+                break;
+            }
+            case evolution::genome::ShapeType::Box:
+            default:
+                volume = 8.0 * std::max(0.05, x) * std::max(0.05, y) * std::max(0.05, z);
+                break;
         }
-        case evolution::genome::ShapeType::CapsuleY: {
-            const double radius = std::max(0.05, x);
-            const double half_height = std::max(0.05, y);
-            const double cylinder_height = 2.0 * half_height;
-            const double sphere_volume = (4.0 / 3.0) * kPi * radius * radius * radius;
-            const double cylinder_volume = kPi * radius * radius * cylinder_height;
-            return sphere_volume + cylinder_volume;
-        }
-        case evolution::genome::ShapeType::Box:
-        default:
-            return 8.0 * std::max(0.05, x) * std::max(0.05, y) * std::max(0.05, z);
     }
+    
+    for (const auto& child : body.children) {
+        if (child) {
+            volume += ExtractVolume(*child);
+        }
+    }
+    return volume;
 }
 
 [[nodiscard]] double EstimateBrainCost(const evolution::genome::MLP* mlp) noexcept {
@@ -253,7 +275,7 @@ constexpr double kPi = 3.141592653589793238462643383279502884;
     }
 }
 
-[[nodiscard]] std::array<double, 8> BuildTraitLatent(const evolution::genome::Body* body,
+[[nodiscard]] std::array<double, 8> BuildTraitLatent(const evolution::genome::BodyNode* body,
                                                     double brain_params,
                                                     std::size_t module_count) noexcept {
     std::array<double, 8> latent{};
@@ -298,7 +320,7 @@ constexpr double kPi = 3.141592653589793238462643383279502884;
     return latent;
 }
 
-[[nodiscard]] std::array<double, 8> BuildTraitLatent(const evolution::genome::BodyT* body,
+[[nodiscard]] std::array<double, 8> BuildTraitLatent(const evolution::genome::BodyNodeT* body,
                                                     double brain_params,
                                                     std::size_t module_count) noexcept {
     std::array<double, 8> latent{};
@@ -343,13 +365,13 @@ constexpr double kPi = 3.141592653589793238462643383279502884;
     return latent;
 }
 
-[[nodiscard]] double ComputeMass(const evolution::genome::Body& body) noexcept {
+[[nodiscard]] double ComputeMass(const evolution::genome::BodyNode& body) noexcept {
     const double density = std::clamp(static_cast<double>(body.mass_density()), 50.0, 2000.0);
     const double volume = ExtractVolume(body);
     return std::max(0.5, density * volume * 0.001);
 }
 
-[[nodiscard]] double ComputeMass(const evolution::genome::BodyT& body) noexcept {
+[[nodiscard]] double ComputeMass(const evolution::genome::BodyNodeT& body) noexcept {
     const double density = std::clamp(static_cast<double>(body.mass_density), 50.0, 2000.0);
     const double volume = ExtractVolume(body);
     return std::max(0.5, density * volume * 0.001);

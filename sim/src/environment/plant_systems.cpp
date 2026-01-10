@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/environment/soil_volume.h"
 
 namespace evolution::sim {
 
@@ -17,10 +18,21 @@ PlantGrowthSystem::PlantGrowthSystem(double nutrient_to_energy) noexcept
 
 void PlantGrowthSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
-    if (!registry.ctx().contains<SoilGrid>()) {
+    
+    SoilVolume* volume = nullptr;
+    if (registry.ctx().contains<SoilVolume>()) {
+        volume = &registry.ctx().get<SoilVolume>();
+    }
+
+    SoilGrid* soil_grid = nullptr;
+    if (registry.ctx().contains<SoilGrid>()) {
+        soil_grid = &registry.ctx().get<SoilGrid>();
+    }
+
+    if (volume == nullptr && soil_grid == nullptr) {
         return;
     }
-    auto& soil = registry.ctx().get<SoilGrid>();
+
     const double dt = context.fixed_dt();
 
     auto view = registry.view<TransformComponent, PlantComponent>();
@@ -35,9 +47,16 @@ void PlantGrowthSystem::tick(SimulationContext& context) {
 
         plant.seed_timer += dt;
 
-        const float soil_value = soil.sample(transform.position.x, transform.position.z);
+        double soil_value = 0.0;
+        if (volume) {
+            // Use nitrogen as primary nutrient
+            soil_value = volume->sample(transform.position).nitrogen.to_double();
+        } else {
+            soil_value = static_cast<double>(soil_grid->sample(transform.position.x, transform.position.z));
+        }
+
         const double uptake_capacity = plant.growth_rate * dt * nutrient_to_energy_;
-        const double uptake = std::min(static_cast<double>(soil_value), uptake_capacity);
+        const double uptake = std::min(soil_value, uptake_capacity);
 
         if (uptake > 0.0) {
             // Clamp to max energy while still reducing soil nutrients.
@@ -45,11 +64,26 @@ void PlantGrowthSystem::tick(SimulationContext& context) {
             const double applied = new_energy - plant.energy;
             plant.energy = new_energy;
 
-            const double cell_size = soil.cell_size();
-            const int ix = std::clamp(static_cast<int>(transform.position.x / cell_size), 0, soil.width() - 1);
-            const int iz = std::clamp(static_cast<int>(transform.position.z / cell_size), 0, soil.height() - 1);
-            auto& cell = soil.at(ix, iz);
-            cell = std::max(0.0F, cell - static_cast<float>(applied));
+            if (volume) {
+                // Discrete update
+                int ix = static_cast<int>(transform.position.x / volume->voxel_size());
+                int iy = static_cast<int>(transform.position.y / volume->voxel_size());
+                int iz = static_cast<int>(transform.position.z / volume->voxel_size());
+                
+                ix = std::clamp(ix, 0, volume->width() - 1);
+                iy = std::clamp(iy, 0, volume->height() - 1);
+                iz = std::clamp(iz, 0, volume->depth() - 1);
+                
+                auto& voxel = volume->at(ix, iy, iz);
+                double current_n = voxel.nitrogen.to_double();
+                voxel.nitrogen = math::Fixed64(std::max(0.0, current_n - applied));
+            } else {
+                const double cell_size = soil_grid->cell_size();
+                const int ix = std::clamp(static_cast<int>(transform.position.x / cell_size), 0, soil_grid->width() - 1);
+                const int iz = std::clamp(static_cast<int>(transform.position.z / cell_size), 0, soil_grid->height() - 1);
+                auto& cell = soil_grid->at(ix, iz);
+                cell = std::max(0.0F, cell - static_cast<float>(applied));
+            }
         }
 
         if (plant.energy <= 0.0) {
@@ -71,11 +105,21 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
     if (terrain_ptr == nullptr) {
         return;
     }
-    auto* soil_ptr = registry.ctx().find<SoilGrid>();
-    if (soil_ptr == nullptr) {
+    
+    SoilVolume* volume = nullptr;
+    if (registry.ctx().contains<SoilVolume>()) {
+        volume = &registry.ctx().get<SoilVolume>();
+    }
+
+    SoilGrid* soil_grid = nullptr;
+    if (registry.ctx().contains<SoilGrid>()) {
+        soil_grid = &registry.ctx().get<SoilGrid>();
+    }
+
+    if (volume == nullptr && soil_grid == nullptr) {
         return;
     }
-    auto& soil = *soil_ptr;
+
     const auto* biome_map = registry.ctx().find<BiomeMap>();
     const auto* water_map = registry.ctx().find<WaterMap>();
     const auto* species_registry = registry.ctx().find<PlantSpeciesRegistry>();
@@ -128,7 +172,14 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
             continue;
         }
 
-        const float soil_sample = soil.sample(world_x, world_z);
+        float soil_sample = 0.0F;
+        if (volume) {
+            // Assume surface sample or slightly below
+            soil_sample = static_cast<float>(volume->sample(Vec3{world_x, transform.position.y, world_z}).nitrogen.to_double());
+        } else {
+            soil_sample = soil_grid->sample(world_x, world_z);
+        }
+
         if (soil_sample < 0.5F) {
             continue;
         }
@@ -212,5 +263,3 @@ void PlantSpatialSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-
-

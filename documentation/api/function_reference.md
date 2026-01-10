@@ -1371,3 +1371,39 @@ void tick(SimulationContext& context) override;
 
 **Service Requirements**: `SoilGrid` in `registry.ctx()`
 
+---
+
+## PhenotypeBuilder
+
+### build()
+
+```cpp
+[[nodiscard]] static PhenotypeBuildResult build(GenomeId id,
+                                                entt::registry& registry,
+                                                entt::entity entity,
+                                                const GenomeStorage& storage) noexcept;
+```
+
+**Parameters**:
+- `id`: Genome identifier to instantiate (must exist in `GenomeStorage`)
+- `registry`: Destination ECS registry that will receive the generated components
+- `entity`: Target entity handle (already created in `registry`)
+- `storage`: Genome storage that provides serialized genome data
+
+**Returns**: `PhenotypeBuildResult` containing `{ok, msg, traits}`.
+
+**Exceptions**: None (errors are reported via `PhenotypeBuildResult`).
+
+**Complexity**: O(C + W) where `C` counts component writes (~8) and `W` is the number of neural network weights defined by the genome.
+
+**Side Effects**:
+- Creates or overwrites every required gameplay component on `entity`.
+- Preserves any pre-existing `TransformComponent` so spawn systems can set world-space poses before invoking the builder; if missing, a zeroed transform is emplaced.
+- Resets other generated components (kinematics, collider, metabolism, brain, actuation, genome handle, reproduction, lifecycle, fitness) to deterministic values derived from the genome.
+
+**Thread Safety**: Not thread-safe. Callers must serialize access to the registry.
+
+**Notes**:
+- Deterministic: identical genomes always yield identical component graphs.
+- Validation: returns `{ok: false, msg}` without mutating non-transform components if the requested genome is missing or invalid.
+

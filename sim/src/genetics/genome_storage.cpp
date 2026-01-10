@@ -41,29 +41,48 @@ constexpr float kMaxDensity = 900.0f;
     return vec;
 }
 
-void PopulateBody(evolution::genome::BodyT& body, Pcg32& rng) {
+void PopulateBodyNode(evolution::genome::BodyNodeT& node, Pcg32& rng, int depth = 0) {
     const double choice = rng.next_unit();
     if (choice < 0.34) {
-        body.shape = evolution::genome::ShapeType::Sphere;
+        node.shape = evolution::genome::ShapeType::Sphere;
         const float radius = RandomBetween(rng, kMinRadius, kMaxRadius);
-        body.size = MakeVec3Ptr(radius, 0.0f, 0.0f);
+        node.size = MakeVec3Ptr(radius, 0.0f, 0.0f);
     } else if (choice < 0.67) {
-        body.shape = evolution::genome::ShapeType::CapsuleY;
+        node.shape = evolution::genome::ShapeType::CapsuleY;
         const float radius = RandomBetween(rng, kMinRadius * 0.75f, kMaxRadius * 0.8f);
         const float half_height = RandomBetween(rng, 0.4f, 2.5f);
-        body.size = MakeVec3Ptr(radius, half_height, 0.0f);
+        node.size = MakeVec3Ptr(radius, half_height, 0.0f);
     } else {
-        body.shape = evolution::genome::ShapeType::Box;
+        node.shape = evolution::genome::ShapeType::Box;
         const float hx = RandomBetween(rng, 0.3f, 1.0f);
         const float hy = RandomBetween(rng, 0.3f, 1.2f);
         const float hz = RandomBetween(rng, 0.3f, 1.0f);
-        body.size = MakeVec3Ptr(hx, hy, hz);
+        node.size = MakeVec3Ptr(hx, hy, hz);
     }
 
-    body.mass_density = RandomBetween(rng, kMinDensity, kMaxDensity);
-    body.color = MakeVec3Ptr(RandomBetween(rng, 0.1f, 0.9f),
+    node.mass_density = RandomBetween(rng, kMinDensity, kMaxDensity);
+    node.color = MakeVec3Ptr(RandomBetween(rng, 0.1f, 0.9f),
                              RandomBetween(rng, 0.1f, 0.9f),
                              RandomBetween(rng, 0.1f, 0.9f));
+                             
+    // Randomly add children if depth < limit
+    if (depth < 2 && rng.next_unit() < 0.4) {
+        auto child = std::make_unique<evolution::genome::BodyNodeT>();
+        
+        // Random transform
+        child->transform = MakeVec3Ptr(RandomBetween(rng, -1.0f, 1.0f),
+                                       RandomBetween(rng, -1.0f, 1.0f),
+                                       RandomBetween(rng, -1.0f, 1.0f));
+                                       
+        // Random joint
+        child->joint_to_parent = std::make_unique<evolution::genome::JointT>();
+        child->joint_to_parent->type = rng.next_unit() < 0.5 ? evolution::genome::JointType::Hinge : evolution::genome::JointType::Spherical;
+        child->joint_to_parent->anchor = MakeVec3Ptr(0.0f, 0.0f, 0.0f);
+        child->joint_to_parent->axis = MakeVec3Ptr(0.0f, 1.0f, 0.0f);
+        
+        PopulateBodyNode(*child, rng, depth + 1);
+        node.children.push_back(std::move(child));
+    }
 }
 
 void PopulateMlp(evolution::genome::MLPT& mlp, Pcg32& rng) {
@@ -189,8 +208,8 @@ GenomeId GenomeStorage::create_random(std::uint64_t seed) {
 
     Pcg32 rng(seed);
 
-    genome.body = std::make_unique<evolution::genome::BodyT>();
-    PopulateBody(*genome.body, rng);
+    genome.body = std::make_unique<evolution::genome::BodyNodeT>();
+    PopulateBodyNode(*genome.body, rng);
 
     constexpr std::uint32_t kContextSize = 6;
     const std::size_t module_count = 1 + static_cast<std::size_t>(rng.next_u32() % 3);

@@ -52,6 +52,7 @@ struct TransformComponent {
 - Position is always valid (finite values)
 - Position represents entity center point
 - Position updates atomically (no partial updates)
+- PhenotypeBuilder respects caller-initialized transforms; spawn systems must set `TransformComponent` before invoking the builder if a specific spawn pose is required
 
 ---
 

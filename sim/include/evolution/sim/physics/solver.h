@@ -37,6 +37,15 @@ void solve_position_constraints(std::span<ContactManifold> manifolds,
                                 double baumgarte,
                                 double slop);
 
+/**
+ * @brief Resolves joint constraints (hinges, fixed, spherical).
+ *
+ * @param registry entt::registry& Registry containing joints and bodies.
+ * @param dt double Simulation timestep.
+ * @complexity O(J) where J is joint count.
+ */
+void solve_joint_constraints(entt::registry& registry, double dt);
+
 }  // namespace evolution::sim
 
 

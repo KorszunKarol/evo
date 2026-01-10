@@ -1,6 +1,8 @@
 #include "evolution/sim/environment/soil_volume.h"
+#include "evolution/sim/environment/environment.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace evolution::sim {
@@ -24,14 +26,14 @@ const SoilVoxel& SoilVolume::at(int x, int y, int z) const {
 }
 
 SoilVoxel SoilVolume::sample(const Vec3& pos) const {
-    // Transform to grid coordinates
-    // Assuming Y=0 is top of soil for now, or bottom? 
-    // Let's assume standard grid mapping: pos / voxel_size
     double gx = pos.x / config_.voxel_size;
-    double gy = pos.y / config_.voxel_size;
+    double gy = pos.y / config_.voxel_size; // Assuming Y down? or Y up? Terrain is usually Y up. 
+    // If soil volume starts at some Y, we need offset. Assuming Y=0 is top/bottom.
+    // Since this is a volume, let's assume Y=0 is the surface (0 index) or bottom (0 index).
+    // Given Terrain uses Y for height, and soil is usually *below* terrain or *is* terrain.
+    // For now, simple mapping: Y index = pos.y / size.
     double gz = pos.z / config_.voxel_size;
 
-    // Clamp to valid range (minus 1 for interpolation)
     gx = std::clamp(gx, 0.0, static_cast<double>(config_.width) - 1.0001);
     gy = std::clamp(gy, 0.0, static_cast<double>(config_.height) - 1.0001);
     gz = std::clamp(gz, 0.0, static_cast<double>(config_.depth) - 1.0001);
@@ -47,16 +49,10 @@ SoilVoxel SoilVolume::sample(const Vec3& pos) const {
     const double ty = gy - y0;
     const double tz = gz - z0;
 
-    // Helper for linear interpolation of Fixed64
     auto lerp_fixed = [](math::Fixed64 a, math::Fixed64 b, double t) {
-        // Convert to double for interpolation to avoid precision headaches with Fixed64 mult logic for now, 
-        // or assume t is Fixed64? 't' is derived from double world pos.
-        // For strictly deterministic sampling, 'pos' should ideally be fixed point too.
-        // But Vec3 is double. We'll convert to double, lerp, back to fixed.
         return math::Fixed64(a.to_double() + (b.to_double() - a.to_double()) * t);
     };
 
-    // Helper to interpolation whole voxel
     auto lerp_voxel = [&](const SoilVoxel& v0, const SoilVoxel& v1, double t) {
         SoilVoxel res;
         res.nitrogen = lerp_fixed(v0.nitrogen, v1.nitrogen, t);
@@ -67,7 +63,6 @@ SoilVoxel SoilVolume::sample(const Vec3& pos) const {
         return res;
     };
 
-    // Trilinear interpolation
     const SoilVoxel& c000 = at(x0, y0, z0);
     const SoilVoxel& c100 = at(x1, y0, z0);
     const SoilVoxel& c010 = at(x0, y1, z0);
@@ -89,11 +84,7 @@ SoilVoxel SoilVolume::sample(const Vec3& pos) const {
 }
 
 void SoilVolume::diffuse(math::Fixed64 dt) {
-    // 3D Laplacian diffusion (7-point stencil)
-    // k * dt
     const math::Fixed64 rate = config_.diffusion_rate * dt;
-    
-    // If rate is negligible, skip
     if (rate.raw() <= 0) return;
 
     for (int y = 1; y < config_.height - 1; ++y) {
@@ -102,19 +93,13 @@ void SoilVolume::diffuse(math::Fixed64 dt) {
                 const std::size_t idx = index(x, y, z);
                 const SoilVoxel& center = voxels_[idx];
                 
-                // Sum neighbors
-                // x-axis
                 const SoilVoxel& xm = voxels_[index(x - 1, y, z)];
                 const SoilVoxel& xp = voxels_[index(x + 1, y, z)];
-                // y-axis
                 const SoilVoxel& ym = voxels_[index(x, y - 1, z)];
                 const SoilVoxel& yp = voxels_[index(x, y + 1, z)];
-                // z-axis
                 const SoilVoxel& zm = voxels_[index(x, y, z - 1)];
                 const SoilVoxel& zp = voxels_[index(x, y, z + 1)];
 
-                // Apply diffusion for each component
-                // NewVal = Val + Rate * (SumNeighbor - 6*Val)
                 auto diffuse_comp = [&](math::Fixed64 val, 
                                       math::Fixed64 vxm, math::Fixed64 vxp,
                                       math::Fixed64 vym, math::Fixed64 vyp,
@@ -134,19 +119,6 @@ void SoilVolume::diffuse(math::Fixed64 dt) {
         }
     }
     
-    // Handle boundaries (copy or reflect? For now, just keep static or do nothing to them)
-    // Ideally we iterate inner and ignore boundaries, effectively fixed boundary conditions.
-    // Or we copy scratch to voxels but only the inner part?
-    // Let's copy everything, assuming boundaries were initialized in scratch or don't change.
-    // To be safe, we should copy boundaries from 'voxels_' to 'scratch_' before swap?
-    // Or just iterate boundaries separately. 
-    // Simplest: Leave boundaries constant (Dirichlet).
-    
-    // Copy inner scratch back to voxels.
-    // Actually, just swapping is faster, but then scratch has old data on boundaries.
-    // If we initialize scratch once, then swap, the boundaries of 'voxels' (now old scratch) might be garbage.
-    // Correct approach: compute full grid or handle boundaries properly.
-    // Let's do simple copy for now to be correct.
     for (int y = 1; y < config_.height - 1; ++y) {
         for (int z = 1; z < config_.depth - 1; ++z) {
             for (int x = 1; x < config_.width - 1; ++x) {
@@ -157,5 +129,44 @@ void SoilVolume::diffuse(math::Fixed64 dt) {
     }
 }
 
-}  // namespace evolution::sim
+void SoilVolume::regenerate(math::Fixed64 dt, const BiomeMap* biome_map, double climate_mult) {
+    // Hardcoded baselines for now, similar to SoilGrid
+    constexpr std::array<double, 4> baselines = {4.0, 5.0, 6.0, 3.0}; 
+    constexpr std::array<double, 4> rates = {0.06, 0.08, 0.10, 0.04};
+    
+    // Default fallback
+    const math::Fixed64 def_rate = math::Fixed64(0.05 * climate_mult);
+    const math::Fixed64 def_base = math::Fixed64(4.0);
+    const math::Fixed64 dt_fix = dt;
 
+    for (int z = 0; z < config_.depth; ++z) {
+        for (int x = 0; x < config_.width; ++x) {
+            math::Fixed64 rate = def_rate;
+            math::Fixed64 base = def_base;
+
+            if (biome_map) {
+                double wx = static_cast<double>(x) * config_.voxel_size;
+                double wz = static_cast<double>(z) * config_.voxel_size;
+                BiomeId biome = biome_map->sample(wx, wz);
+                int idx = static_cast<int>(biome);
+                if (idx >= 0 && idx < 4) {
+                    rate = math::Fixed64(rates[idx] * climate_mult);
+                    base = math::Fixed64(baselines[idx]);
+                }
+            }
+            
+            // Apply to full column (y)
+            math::Fixed64 step = rate * dt_fix;
+            for (int y = 0; y < config_.height; ++y) {
+                SoilVoxel& v = at(x, y, z);
+                // Only regenerate nitrogen for now as proxy for general nutrients
+                if (v.nitrogen < base) {
+                    v.nitrogen = v.nitrogen + step;
+                    if (v.nitrogen > base) v.nitrogen = base;
+                }
+            }
+        }
+    }
+}
+
+}  // namespace evolution::sim

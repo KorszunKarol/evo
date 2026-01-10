@@ -51,7 +51,7 @@ public:
 
 The builder creates the following components:
 
-1. **TransformComponent**: Position initialized to `{0, 0, 0}` (caller should set spawn location)
+1. **TransformComponent**: Created only when absent; preserves caller-provided spawn location, otherwise initialized to `{0, 0, 0}`
 
 2. **KinematicsComponent**:
    - `inverse_mass`: Computed from body mass density and volume
@@ -163,7 +163,7 @@ double compute_basal_rate(double mass, double brain_cost) noexcept;
 **Guarantees**:
 - All required components created (or error returned)
 - Component values deterministic (same genome → same components)
-- Existing components overridden (no partial updates)
+- Pre-existing `TransformComponent` (spawn pose) is preserved; all other generated components are overwritten deterministically
 
 ### PhenotypeBuilder ↔ GenomeStorage
 

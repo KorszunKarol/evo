@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "evolution/genetics/innovation_database.h"
+#include "evolution/genetics/morphology_ops.h"
+#include "evolution/genetics/mutation_ops.h"
 #include "evolution/genetics/trait_extraction.h"
 
 namespace evolution::genetics {
@@ -24,16 +27,37 @@ namespace {
     return clone;
 }
 
-[[nodiscard]] std::unique_ptr<evolution::genome::BodyT> CloneBody(
-    const std::unique_ptr<evolution::genome::BodyT>& body) {
-    if (!body) {
+[[nodiscard]] std::unique_ptr<evolution::genome::JointT> CloneJoint(
+    const std::unique_ptr<evolution::genome::JointT>& joint) {
+    if (!joint) {
         return nullptr;
     }
-    auto clone = std::make_unique<evolution::genome::BodyT>();
-    clone->shape = body->shape;
-    clone->size = CloneVec3(body->size);
-    clone->mass_density = body->mass_density;
-    clone->color = CloneVec3(body->color);
+    auto clone = std::make_unique<evolution::genome::JointT>();
+    clone->type = joint->type;
+    clone->axis = CloneVec3(joint->axis);
+    clone->limits = CloneVec3(joint->limits);
+    clone->anchor = CloneVec3(joint->anchor);
+    return clone;
+}
+
+[[nodiscard]] std::unique_ptr<evolution::genome::BodyNodeT> CloneBodyNode(
+    const std::unique_ptr<evolution::genome::BodyNodeT>& node) {
+    if (!node) {
+        return nullptr;
+    }
+    auto clone = std::make_unique<evolution::genome::BodyNodeT>();
+    clone->shape = node->shape;
+    clone->size = CloneVec3(node->size);
+    clone->mass_density = node->mass_density;
+    clone->color = CloneVec3(node->color);
+    clone->joint_to_parent = CloneJoint(node->joint_to_parent);
+    clone->transform = CloneVec3(node->transform);
+    
+    clone->children.reserve(node->children.size());
+    for (const auto& child : node->children) {
+        clone->children.push_back(CloneBodyNode(child));
+    }
+    
     return clone;
 }
 
@@ -104,7 +128,7 @@ namespace {
     return clone;
 }
 
-void JitterColor(evolution::genome::BodyT& body, Pcg32& rng, double sigma) noexcept {
+void JitterColor(evolution::genome::BodyNodeT& body, Pcg32& rng, double sigma) noexcept {
     if (!body.color) {
         return;
     }
@@ -115,6 +139,13 @@ void JitterColor(evolution::genome::BodyT& body, Pcg32& rng, double sigma) noexc
     body.color->x = jitter(body.color->x);
     body.color->y = jitter(body.color->y);
     body.color->z = jitter(body.color->z);
+    
+    // Recurse for children
+    for (auto& child : body.children) {
+        if (child) {
+            JitterColor(*child, rng, sigma);
+        }
+    }
 }
 
 }  // namespace
@@ -160,6 +191,52 @@ evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
             }
         }
         JitterColor(*genome.body, rng, weight_sigma * 0.2);
+        
+        // Structural morphology mutations (limb add/remove/modify)
+        MorphologyConstraints morph_constraints{};
+        apply_morphology_mutations(
+            *genome.body, rng,
+            mutate_rate_struct * 0.1,   // add_prob
+            mutate_rate_struct * 0.3,   // modify_prob
+            mutate_rate_struct * 0.05,  // remove_prob
+            morph_constraints);
+    }
+    
+    // Diet mutation (rare - ~1% chance)
+    if (rng.next_unit() < 0.01) {
+        // Flip diet type
+        if (genome.diet == evolution::genome::DietPreference::Herbivore) {
+            genome.diet = evolution::genome::DietPreference::Carnivore;
+        } else if (genome.diet == evolution::genome::DietPreference::Carnivore) {
+            genome.diet = evolution::genome::DietPreference::Herbivore;
+        }
+    }
+    
+    // Speed trait mutation (affects movement speed)
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.3);
+        genome.speed_trait = static_cast<float>(std::clamp(
+            static_cast<double>(genome.speed_trait) + delta,
+            0.5,
+            2.0));
+    }
+    
+    // Attack reach mutation (carnivore predation range)
+    if (rng.next_unit() < mutate_rate_param * 0.5) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.attack_reach = static_cast<float>(std::clamp(
+            static_cast<double>(genome.attack_reach) + delta,
+            1.0,
+            3.0));
+    }
+    
+    // Attack power mutation (energy drain rate)
+    if (rng.next_unit() < mutate_rate_param * 0.5) {
+        const double delta = rng.normal(0.0, weight_sigma * 2.0);
+        genome.attack_power = static_cast<float>(std::clamp(
+            static_cast<double>(genome.attack_power) + delta,
+            3.0,
+            15.0));
     }
 
     // MLP mutations
@@ -259,6 +336,28 @@ evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
     return genome;
 }
 
+evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
+                                  const ReproConfig& config,
+                                  std::uint64_t seed,
+                                  InnovationDatabase& innovations) noexcept {
+    genome = mutate(std::move(genome), config, seed);
+    
+    if (genome.neat) {
+        Pcg32 rng(seed ^ 0x5354525543544D55ULL);
+        
+        StructuralMutationConfig struct_config{};
+        struct_config.add_node_prob = config.mutate_rate_struct * 0.3;
+        struct_config.add_conn_prob = config.mutate_rate_struct * 0.5;
+        struct_config.delete_conn_prob = config.mutate_rate_struct * 0.1;
+        struct_config.weight_init_sigma = config.weight_sigma;
+        struct_config.allow_recurrent = true;
+        
+        apply_structural_mutations(*genome.neat, innovations, rng, struct_config);
+    }
+    
+    return genome;
+}
+
 namespace {
 
 [[nodiscard]] std::unique_ptr<evolution::genome::MLPT> BlendMlp(
@@ -304,6 +403,139 @@ namespace {
     return blended;
 }
 
+[[nodiscard]] std::unique_ptr<evolution::genome::NEATT> CrossoverNeat(
+    const evolution::genome::NEATT* fitter_neat,
+    const evolution::genome::NEATT* other_neat,
+    Pcg32& rng) {
+    if (!fitter_neat && !other_neat) {
+        return nullptr;
+    }
+    if (!fitter_neat) {
+        return CloneNeat(std::make_unique<evolution::genome::NEATT>(*other_neat));
+    }
+    if (!other_neat) {
+        return CloneNeat(std::make_unique<evolution::genome::NEATT>(*fitter_neat));
+    }
+
+    auto child = std::make_unique<evolution::genome::NEATT>();
+    child->input_count = fitter_neat->input_count;
+    child->output_count = fitter_neat->output_count;
+    child->update_rate_hz = (fitter_neat->update_rate_hz + other_neat->update_rate_hz) * 0.5f;
+
+    std::unordered_map<std::uint32_t, const evolution::genome::NeatConnT*> fitter_conns;
+    std::unordered_map<std::uint32_t, const evolution::genome::NeatConnT*> other_conns;
+    std::uint32_t max_fitter_innov = 0;
+    std::uint32_t max_other_innov = 0;
+
+    for (const auto& conn : fitter_neat->conns) {
+        if (conn) {
+            fitter_conns[conn->innovation] = conn.get();
+            max_fitter_innov = std::max(max_fitter_innov, conn->innovation);
+        }
+    }
+    for (const auto& conn : other_neat->conns) {
+        if (conn) {
+            other_conns[conn->innovation] = conn.get();
+            max_other_innov = std::max(max_other_innov, conn->innovation);
+        }
+    }
+
+    std::unordered_set<std::uint32_t> all_innovations;
+    for (const auto& [innov, _] : fitter_conns) {
+        all_innovations.insert(innov);
+    }
+    for (const auto& [innov, _] : other_conns) {
+        all_innovations.insert(innov);
+    }
+
+    std::unordered_set<std::uint32_t> needed_nodes;
+    
+    for (std::uint32_t innov : all_innovations) {
+        const auto fitter_it = fitter_conns.find(innov);
+        const auto other_it = other_conns.find(innov);
+        
+        const evolution::genome::NeatConnT* chosen = nullptr;
+        
+        if (fitter_it != fitter_conns.end() && other_it != other_conns.end()) {
+            chosen = rng.next_unit() < 0.5 ? fitter_it->second : other_it->second;
+        } else if (fitter_it != fitter_conns.end()) {
+            chosen = fitter_it->second;
+        } else if (innov <= max_fitter_innov && other_it != other_conns.end()) {
+            continue;
+        } else if (other_it != other_conns.end()) {
+            continue;
+        }
+        
+        if (chosen) {
+            auto new_conn = std::make_unique<evolution::genome::NeatConnT>();
+            new_conn->in = chosen->in;
+            new_conn->out = chosen->out;
+            new_conn->weight = chosen->weight;
+            new_conn->innovation = chosen->innovation;
+            new_conn->recurrent = chosen->recurrent;
+            
+            if (!chosen->enabled) {
+                new_conn->enabled = rng.next_unit() < 0.25;
+            } else {
+                new_conn->enabled = true;
+            }
+            
+            needed_nodes.insert(new_conn->in);
+            needed_nodes.insert(new_conn->out);
+            child->conns.push_back(std::move(new_conn));
+        }
+    }
+    
+    std::unordered_map<std::uint32_t, const evolution::genome::NeatNodeT*> fitter_nodes;
+    std::unordered_map<std::uint32_t, const evolution::genome::NeatNodeT*> other_nodes;
+    
+    for (const auto& node : fitter_neat->nodes) {
+        if (node) {
+            fitter_nodes[node->id] = node.get();
+        }
+    }
+    for (const auto& node : other_neat->nodes) {
+        if (node) {
+            other_nodes[node->id] = node.get();
+        }
+    }
+    
+    for (std::uint32_t node_id : needed_nodes) {
+        const evolution::genome::NeatNodeT* chosen = nullptr;
+        
+        const auto fitter_it = fitter_nodes.find(node_id);
+        const auto other_it = other_nodes.find(node_id);
+        
+        if (fitter_it != fitter_nodes.end() && other_it != other_nodes.end()) {
+            chosen = rng.next_unit() < 0.5 ? fitter_it->second : other_it->second;
+        } else if (fitter_it != fitter_nodes.end()) {
+            chosen = fitter_it->second;
+        } else if (other_it != other_nodes.end()) {
+            chosen = other_it->second;
+        }
+        
+        if (chosen) {
+            auto new_node = std::make_unique<evolution::genome::NeatNodeT>();
+            new_node->id = chosen->id;
+            new_node->type = chosen->type;
+            new_node->bias = chosen->bias;
+            new_node->act = chosen->act;
+            child->nodes.push_back(std::move(new_node));
+        }
+    }
+    
+    std::sort(child->nodes.begin(), child->nodes.end(),
+              [](const auto& a, const auto& b) {
+                  if (!a || !b) return false;
+                  if (a->type != b->type) {
+                      return static_cast<int>(a->type) < static_cast<int>(b->type);
+                  }
+                  return a->id < b->id;
+              });
+    
+    return child;
+}
+
 }  // namespace
 
 evolution::genome::GenomeT crossover(const evolution::genome::GenomeT& a,
@@ -324,10 +556,29 @@ evolution::genome::GenomeT crossover(const evolution::genome::GenomeT& a,
     child.parents = {a.id, b.id};
 
     // Body: choose fitter parent
-    child.body = CloneBody(fitter.body);
+    child.body = CloneBodyNode(fitter.body);
     if (!child.body) {
-        child.body = CloneBody(other.body);
+        child.body = CloneBodyNode(other.body);
     }
+    
+    // Diet: inherit from fitter parent (with small chance of using other parent)
+    // This creates reproductive isolation between dietary types
+    if (rng.next_unit() < 0.85) {
+        child.diet = fitter.diet;
+    } else {
+        child.diet = other.diet;
+    }
+    
+    // Inherit combat traits: blend attack reach and power from both parents
+    child.attack_reach = static_cast<float>(
+        static_cast<double>(fitter.attack_reach) * 0.6 +
+        static_cast<double>(other.attack_reach) * 0.4);
+    child.attack_power = static_cast<float>(
+        static_cast<double>(fitter.attack_power) * 0.6 +
+        static_cast<double>(other.attack_power) * 0.4);
+    child.speed_trait = static_cast<float>(
+        static_cast<double>(fitter.speed_trait) * 0.6 +
+        static_cast<double>(other.speed_trait) * 0.4);
 
     // Brain kind: prefer fitter, fallback to other
     child.brain_kind = fitter.brain_kind;
@@ -335,11 +586,8 @@ evolution::genome::GenomeT crossover(const evolution::genome::GenomeT& a,
         child.mlp = BlendMlp(fitter.mlp.get(), other.mlp.get(), rng);
         child.neat = nullptr;
     } else {
-        // NEAT: innovation-based alignment (simplified - take fitter for now)
-        child.neat = CloneNeat(fitter.neat);
-        if (!child.neat) {
-            child.neat = CloneNeat(other.neat);
-        }
+        // NEAT: proper gene alignment by innovation number
+        child.neat = CrossoverNeat(fitter.neat.get(), other.neat.get(), rng);
         child.mlp = nullptr;
     }
 
@@ -457,8 +705,8 @@ evolution::genome::GenomeT crossover(const evolution::genome::GenomeT& a,
 
 namespace {
 
-[[nodiscard]] double BodyDistance(const evolution::genome::Body* body_a,
-                                  const evolution::genome::Body* body_b) noexcept {
+[[nodiscard]] double BodyDistance(const evolution::genome::BodyNode* body_a,
+                                  const evolution::genome::BodyNode* body_b) noexcept {
     if (!body_a || !body_b) {
         return body_a == body_b ? 0.0 : 1.0;
     }
@@ -480,6 +728,17 @@ namespace {
 
     const double shape_penalty = (body_a->shape() == body_b->shape()) ? 0.0 : 0.5;
     dist_sq += shape_penalty * shape_penalty;
+    
+    // Simple structural diff for children count
+    double children_diff = 0.0;
+    if (body_a->children() && body_b->children()) {
+        children_diff = static_cast<double>(body_a->children()->size()) - static_cast<double>(body_b->children()->size());
+    } else if (body_a->children()) {
+        children_diff = static_cast<double>(body_a->children()->size());
+    } else if (body_b->children()) {
+        children_diff = static_cast<double>(body_b->children()->size());
+    }
+    dist_sq += children_diff * children_diff * 0.1;
 
     return std::sqrt(dist_sq);
 }
@@ -616,6 +875,12 @@ double compatibility_distance(const evolution::genome::Genome& a,
     const auto traits_b = ExtractTraitVector(b);
     const double trait_dist = TraitCosineDistance(traits_a, traits_b);
     distance += trait_dist * 0.3;
+    
+    // Diet distance: different diet types add significant penalty
+    // This encourages reproductive isolation between herbivores and carnivores
+    if (a.diet() != b.diet()) {
+        distance += 1.5;  // Large penalty for different diet types
+    }
 
     return distance;
 }

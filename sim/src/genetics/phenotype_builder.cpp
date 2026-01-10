@@ -37,7 +37,7 @@ namespace {
     return 1.0 / hz;
 }
 
-void ConfigureCollider(sim::ColliderComponent& collider, const evolution::genome::Body& body) {
+void ConfigureCollider(sim::ColliderComponent& collider, const evolution::genome::BodyNode& body) {
     collider.material.friction = 0.8;
     collider.material.restitution = 0.05;
     collider.filter = sim::CollisionFilter{};
@@ -106,6 +106,103 @@ void ConfigureReproduction(sim::ReproductionComponent& reproduction, const Deriv
     reproduction.energy_threshold = std::max(120.0, traits.mass * 100.0);
 }
 
+void BuildBodyRecursive(entt::registry& registry,
+                        entt::entity entity,
+                        const evolution::genome::BodyNode& node,
+                        entt::entity parent,
+                        const DerivedTraits& traits) {
+    // 1. Configure Transform (relative to parent if exists, else root)
+    // Note: Root transform is set by caller or default. Children need relative transform.
+    if (parent != entt::null) {
+        auto& transform = registry.emplace_or_replace<sim::TransformComponent>(entity);
+        if (const auto* rel_pos = node.transform()) {
+             // In a real physics engine, we'd calculate world pos from parent.
+             // For now, we assume the physics system handles relative transforms or we initialize them nearby.
+             // Ideally, we should get parent transform and apply offset.
+             if (const auto* parent_transform = registry.try_get<sim::TransformComponent>(parent)) {
+                 transform.position.x = parent_transform->position.x + rel_pos->x();
+                 transform.position.y = parent_transform->position.y + rel_pos->y();
+                 transform.position.z = parent_transform->position.z + rel_pos->z();
+             }
+        }
+    }
+
+    // 2. Configure Kinematics & Rigidbody
+    auto& kinematics = registry.emplace_or_replace<sim::KinematicsComponent>(entity);
+    kinematics.linear_velocity = sim::Vec3{0.0, 0.0, 0.0};
+    kinematics.accumulated_force = sim::Vec3{0.0, 0.0, 0.0};
+    // Distribute mass? Or use node density. For now, use node density.
+    double mass = node.mass_density() * 1.0; // Volume calc needed for true mass
+    // Approximate volume based on shape
+    double volume = 1.0;
+    if (const auto* size = node.size()) {
+        volume = size->x() * size->y() * size->z(); // Rough approx
+    }
+    mass = std::max(0.1, node.mass_density() * volume);
+    
+    kinematics.inverse_mass = (mass > 1e-6) ? 1.0 / mass : 0.0;
+    kinematics.linear_damping = 0.18;
+    kinematics.restitution = 0.05;
+    kinematics.friction = 0.6;
+
+    registry.emplace_or_replace<sim::RigidbodyComponent>(entity);
+
+    // 3. Configure Collider
+    auto& collider = registry.emplace_or_replace<sim::ColliderComponent>(entity);
+    ConfigureCollider(collider, node);
+    
+    // Collision filter: Don't collide with parent (handled by joint usually, but good practice)
+    // For MVP, we might want to use groups.
+
+    // 4. Configure Joint to Parent
+    if (parent != entt::null && node.joint_to_parent()) {
+        const auto* joint_data = node.joint_to_parent();
+        auto& joint = registry.emplace_or_replace<sim::JointComponent>(entity);
+        joint.parent = parent;
+        joint.child = entity;
+        
+        // Map enum
+        switch (joint_data->type()) {
+            case evolution::genome::JointType::Hinge: joint.type = sim::JointType::Hinge; break;
+            case evolution::genome::JointType::Spherical: joint.type = sim::JointType::Spherical; break;
+            case evolution::genome::JointType::Fixed: 
+            default: joint.type = sim::JointType::Fixed; break;
+        }
+
+        if (const auto* anchor = joint_data->anchor()) {
+            joint.local_anchor_child = sim::Vec3{anchor->x(), anchor->y(), anchor->z()};
+            // Parent anchor is implicitly 0 or needs to be defined in genome relative to parent?
+            // Genome says "anchor position relative to child".
+            // Usually joints are defined by two anchors. 
+            // For this MVP, let's assume the joint is at the child's origin in child space,
+            // and at the 'transform' offset in parent space.
+            joint.local_anchor_child = sim::Vec3{0.0, 0.0, 0.0}; // Pivot at child origin
+            if (const auto* t = node.transform()) {
+                joint.local_anchor_parent = sim::Vec3{t->x(), t->y(), t->z()};
+            }
+        }
+        
+        if (const auto* axis = joint_data->axis()) {
+            joint.axis_parent = sim::Vec3{axis->x(), axis->y(), axis->z()}; // In parent frame?
+            joint.axis_child = sim::Vec3{axis->x(), axis->y(), axis->z()}; // Simplified
+        }
+        
+        if (const auto* limits = joint_data->limits()) {
+            joint.limits = sim::Vec3{limits->x(), limits->y(), 0.0};
+        }
+    }
+
+    // 5. Recurse
+    if (const auto* children = node.children()) {
+        for (const auto* child_node : *children) {
+            if (child_node) {
+                entt::entity child_entity = registry.create();
+                BuildBodyRecursive(registry, child_entity, *child_node, entity, traits);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
@@ -127,26 +224,31 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
         result.traits = ComputeDerivedTraits(*genome);
     }
 
-    auto& transform = registry.emplace_or_replace<sim::TransformComponent>(entity);
-    transform.position = sim::Vec3{0.0, 0.0, 0.0};
-
-    auto& kinematics = registry.emplace_or_replace<sim::KinematicsComponent>(entity);
-    kinematics.linear_velocity = sim::Vec3{0.0, 0.0, 0.0};
-    kinematics.accumulated_force = sim::Vec3{0.0, 0.0, 0.0};
-    kinematics.inverse_mass = (result.traits.mass > 1e-6) ? 1.0 / result.traits.mass : 0.0;
-    kinematics.linear_damping = 0.18;
-    kinematics.restitution = 0.05;
-    kinematics.friction = 0.6;
-
-    auto& collider = registry.emplace_or_replace<sim::ColliderComponent>(entity);
-    if (const auto* body = genome->body()) {
-        ConfigureCollider(collider, *body);
-    } else {
-        collider.type = sim::ShapeType::Sphere;
-        collider.sphere.radius = 0.5;
+    // Root transform: respect caller-defined spawn pose if present
+    if (auto* existing_transform = registry.try_get<sim::TransformComponent>(entity); existing_transform == nullptr) {
+        auto& transform = registry.emplace<sim::TransformComponent>(entity);
+        transform.position = sim::Vec3{0.0, 0.0, 0.0};
     }
 
-    registry.emplace_or_replace<sim::RigidbodyComponent>(entity);
+    // Build body tree
+    if (const auto* body = genome->body()) {
+        BuildBodyRecursive(registry, entity, *body, entt::null, result.traits);
+    } else {
+        // Fallback for empty body
+        auto& kinematics = registry.emplace_or_replace<sim::KinematicsComponent>(entity);
+        kinematics.linear_velocity = sim::Vec3{0.0, 0.0, 0.0};
+        kinematics.accumulated_force = sim::Vec3{0.0, 0.0, 0.0};
+        kinematics.inverse_mass = 1.0;
+        kinematics.linear_damping = 0.18;
+        kinematics.restitution = 0.05;
+        kinematics.friction = 0.6;
+
+        auto& collider = registry.emplace_or_replace<sim::ColliderComponent>(entity);
+        collider.type = sim::ShapeType::Sphere;
+        collider.sphere.radius = 0.5;
+        
+        registry.emplace_or_replace<sim::RigidbodyComponent>(entity);
+    }
 
     auto& metabolism = registry.emplace_or_replace<sim::MetabolismComponent>(entity);
     ConfigureMetabolism(metabolism, result.traits);
@@ -159,6 +261,48 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
 
     auto& reproduction = registry.emplace_or_replace<sim::ReproductionComponent>(entity);
     ConfigureReproduction(reproduction, result.traits);
+
+    // Diet configuration from genome
+    auto& diet = registry.emplace_or_replace<sim::DietComponent>(entity);
+    switch (genome->diet()) {
+        case evolution::genome::DietPreference::Carnivore:
+            diet.type = sim::DietType::Carnivore;
+            registry.emplace_or_replace<sim::CarnivoreTag>(entity);
+            // Add combat component for tracking attack cooldowns
+            registry.emplace_or_replace<sim::CombatComponent>(entity, sim::CombatComponent{
+                .attack_cooldown = 1.0,
+                .attack_timer = 0.0,
+                .target = entt::null,
+                .pursuing = false,
+                .damage_dealt = 0.0
+            });
+            break;
+        case evolution::genome::DietPreference::Omnivore:
+            // Future: omnivores could eat both with reduced efficiency
+            diet.type = sim::DietType::Herbivore;
+            registry.emplace_or_replace<sim::HerbivoreTag>(entity);
+            break;
+        case evolution::genome::DietPreference::Herbivore:
+        default:
+            diet.type = sim::DietType::Herbivore;
+            registry.emplace_or_replace<sim::HerbivoreTag>(entity);
+            break;
+    }
+
+    // Configure feeding intent based on diet type
+    const bool is_carnivore = (diet.type == sim::DietType::Carnivore);
+    const double feed_reach = is_carnivore 
+        ? std::max(1.0, static_cast<double>(genome->attack_reach()))
+        : 1.5;
+    const double feed_rate = is_carnivore
+        ? std::max(5.0, static_cast<double>(genome->attack_power()))
+        : 10.0;
+    
+    registry.emplace_or_replace<sim::FeedingIntent>(entity, sim::FeedingIntent{
+        .request_eat = false,  // Controlled by brain
+        .reach = feed_reach,
+        .rate = feed_rate
+    });
 
     auto& lifecycle = registry.emplace_or_replace<sim::LifecycleComponent>(entity);
     lifecycle.age = 0.0;
@@ -203,6 +347,14 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
     fitness.energy_int_accum = 0.0;
     fitness.offspring_count = 0;
     fitness.last_fitness = 0.0;
+
+    // Add VisionComponent by default for spatial awareness
+    registry.emplace_or_replace<sim::VisionComponent>(entity, sim::VisionComponent{
+        .fov_radians = 1.57f,  // 90 degrees
+        .ray_count = 5,
+        .max_range = 10.0f,
+        .enabled = true
+    });
 
     result.ok = true;
     result.msg = "ok";

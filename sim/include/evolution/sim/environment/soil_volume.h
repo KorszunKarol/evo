@@ -6,6 +6,11 @@
 #include "evolution/sim/math/fixed_point.h"
 #include "evolution/sim/math_types.h"
 
+// Forward declaration
+namespace evolution::sim {
+class BiomeMap;
+}
+
 namespace evolution::sim {
 
 ///
@@ -24,7 +29,7 @@ struct SoilVoxel {
 ///
 struct SoilVolumeConfig {
     int width{64};   ///< X axis
-    int height{16};  ///< Y axis (vertical depth)
+    int height{16};  ///< Yush axis (vertical depth)
     int depth{64};   ///< Z axis
     double voxel_size{1.0};
     math::Fixed64 diffusion_rate{0.1};
@@ -51,6 +56,11 @@ public:
     /// @param dt Time step in seconds.
     void diffuse(math::Fixed64 dt);
 
+    /// @brief Regenerate nutrients based on biomes.
+    void regenerate(math::Fixed64 dt, 
+                    const BiomeMap* biome_map, 
+                    double climate_mult);
+
     [[nodiscard]] int width() const { return config_.width; }
     [[nodiscard]] int height() const { return config_.height; }
     [[nodiscard]] int depth() const { return config_.depth; }
@@ -65,4 +75,3 @@ private:
 };
 
 }  // namespace evolution::sim
-

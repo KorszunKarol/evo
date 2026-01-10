@@ -225,6 +225,33 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
             input_buffer_[7] = lifecycle.energy_scale;
         }
 
+        // Append vision sensor inputs if entity has VisionComponent.
+        const VisionComponent* vision = registry.try_get<VisionComponent>(entity);
+        if (vision != nullptr && vision->enabled) {
+            const std::size_t vision_start = 8;
+            const std::size_t ray_count = vision->ray_distances.size();
+            
+            // Ray distances (indices 8 to 8 + ray_count - 1)
+            for (std::size_t r = 0; r < ray_count && (vision_start + r) < sensor_count; ++r) {
+                input_buffer_[vision_start + r] = static_cast<double>(vision->ray_distances[r]);
+            }
+            
+            // Ray hit types encoded as: 0=none, 0.25=plant, 0.5=herbivore, 0.75=carnivore, 1=terrain
+            const std::size_t hit_type_start = vision_start + ray_count;
+            for (std::size_t r = 0; r < ray_count && (hit_type_start + r) < sensor_count; ++r) {
+                double type_encoding = 0.0;
+                switch (vision->ray_hit_types[r]) {
+                    case VisionHitType::None: type_encoding = 0.0; break;
+                    case VisionHitType::Plant: type_encoding = 0.25; break;
+                    case VisionHitType::Herbivore: type_encoding = 0.5; break;
+                    case VisionHitType::Carnivore: type_encoding = 0.75; break;
+                    case VisionHitType::Terrain: type_encoding = 1.0; break;
+                    case VisionHitType::Unknown: type_encoding = 0.0; break;
+                }
+                input_buffer_[hit_type_start + r] = type_encoding;
+            }
+        }
+
         const std::size_t output_count = static_cast<std::size_t>(brain.output_count);
         auto outputs = ensure_output_buffer(output_count);
         std::fill(outputs.begin(), outputs.end(), 0.0);
@@ -361,6 +388,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         double impulse_z = 0.0;
         bool jump = false;
         bool eat = false;
+        bool attack = false;
 
         if (!outputs.empty()) {
             impulse_x = std::clamp(outputs[0], -kImpulseClamp, kImpulseClamp);
@@ -374,11 +402,15 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         if (outputs.size() > 3) {
             eat = outputs[3] > 0.5;
         }
+        if (outputs.size() > 4) {
+            attack = outputs[4] > 0.5;
+        }
 
         actuation.impulse_x = impulse_x;
         actuation.impulse_z = impulse_z;
         actuation.jump = jump;
         actuation.eat = eat;
+        actuation.attack = attack;
         actuation.update_skip = 0;
 
         brain.accumulator = std::fmod(brain.accumulator, brain.update_interval);

@@ -191,13 +191,81 @@ void solve_position_constraints(std::span<ContactManifold> manifolds,
             const double correction_mag = baumgarte * (penetration - slop) / inv_mass_sum;
             const Vec3 correction = cp.normal * correction_mag;
 
-            if (body_a.transform && body_a.is_dynamic()) {
-                body_a.transform->position -= correction * inv_mass_a;
-            }
             if (body_b.transform && body_b.is_dynamic()) {
                 body_b.transform->position += correction * inv_mass_b;
             }
         }
+    }
+}
+
+void solve_joint_constraints(entt::registry& registry, double dt) {
+    auto view = registry.view<JointComponent>();
+    
+    // Simple Baumgarte stabilization for positional drift
+    constexpr double beta = 0.2;
+    
+    for (auto entity : view) {
+        const auto& joint = view.get<JointComponent>(entity);
+        
+        BodyAccess body_a = fetch_body(registry, joint.parent);
+        BodyAccess body_b = fetch_body(registry, joint.child);
+        
+        if (!body_a.transform || !body_b.transform) {
+            continue;
+        }
+        
+        // 1. Positional Constraint (Ball-and-Socket / Fixed anchor)
+        // Calculate world space anchors
+        // Note: For MVP we assume no rotation in TransformComponent yet (as per components.h),
+        // so local_anchor is just an offset.
+        // If rotation existed, we'd do: pos + rot * anchor.
+        
+        Vec3 anchor_a_world = body_a.transform->position + joint.local_anchor_parent;
+        Vec3 anchor_b_world = body_b.transform->position + joint.local_anchor_child;
+        
+        Vec3 delta = anchor_b_world - anchor_a_world;
+        double dist_sq = dot(delta, delta);
+        
+        if (dist_sq > kEpsilon) {
+            double inv_mass_a = body_a.inverse_mass();
+            double inv_mass_b = body_b.inverse_mass();
+            double inv_mass_sum = inv_mass_a + inv_mass_b;
+            
+            if (inv_mass_sum > kEpsilon) {
+                // Positional correction (Baumgarte-like)
+                Vec3 correction = delta * (beta / dt); // Velocity bias? Or just position projection?
+                // Let's do direct position projection for stability in this simple solver
+                correction = delta * 0.5; // Split error?
+                
+                // Weighted split
+                double factor = 1.0 / inv_mass_sum;
+                Vec3 move_a = delta * (inv_mass_a * factor);
+                Vec3 move_b = delta * (-inv_mass_b * factor); // Move b towards a
+                
+                if (body_a.is_dynamic()) body_a.transform->position += move_a;
+                if (body_b.is_dynamic()) body_b.transform->position += move_b;
+                
+                // Velocity correction (keep them together)
+                if (body_a.kinematics && body_b.kinematics) {
+                    Vec3 rel_vel = body_b.kinematics->linear_velocity - body_a.kinematics->linear_velocity;
+                    // We want rel_vel along the delta direction to be zero (or counteract drift)
+                    // Simple damping/locking of relative velocity at the anchor?
+                    // Without rotation, this is just linear velocity locking.
+                    
+                    Vec3 impulse = rel_vel * (-1.0 / inv_mass_sum);
+                    // Apply impulse
+                    body_a.kinematics->linear_velocity -= impulse * inv_mass_a;
+                    body_b.kinematics->linear_velocity += impulse * inv_mass_b;
+                }
+            }
+        }
+        
+        // 2. Angular Constraint
+        // Since we don't have rotation in TransformComponent yet (it's just Vec3 position),
+        // we can't really enforce Hinge/Fixed angular constraints properly.
+        // The roadmap says "constraint-based limbs", but components.h says "rotation ... deferred".
+        // So for now, we only enforce that they stick together (Spherical joint behavior).
+        // Once rotation is added to TransformComponent, we would add angular constraints here.
     }
 }
 

@@ -19,6 +19,8 @@
 #include "evolution/sim/reproduction_system.h"
 #include "evolution/sim/species_index_system.h"
 #include "evolution/sim/stats_system.h"
+#include "evolution/sim/telemetry_system.h"
+#include "evolution/sim/vision_system.h"
 
 namespace evolution::sim {
 
@@ -90,6 +92,7 @@ void setup_scenario(SimulationApp& app,
     physics_config.enable_heightfield = true;
 
     auto backend = std::make_unique<SimplePhysicsBackend>(physics_config);
+    auto* backend_ptr = backend.get();
 
     app.scheduler().add_system(std::make_unique<SoilSystem>());
     app.scheduler().add_system(std::make_unique<PlantGrowthSystem>());
@@ -97,6 +100,7 @@ void setup_scenario(SimulationApp& app,
     app.scheduler().add_system(std::make_unique<PlantSpatialSystem>());
     app.scheduler().add_system(std::make_unique<FeedingSystem>());
     app.scheduler().add_system(std::make_unique<PlantCleanupSystem>());
+    app.scheduler().add_system(std::make_unique<VisionSystem>(*backend_ptr));
     app.scheduler().add_system(std::make_unique<BrainInferenceSystem>(storage));
     app.scheduler().add_system(std::make_unique<MotorSystem>());
     app.scheduler().add_system(std::make_unique<MetabolismSystem>());
@@ -104,12 +108,14 @@ void setup_scenario(SimulationApp& app,
     app.scheduler().add_system(std::make_unique<ReproductionSystem>(storage,
                                                                     scenario.reproduction,
                                                                     scenario.reproduction_seed));
+    // Telemetry gathers stats from the tick that just finished
+    app.scheduler().add_system(std::make_unique<TelemetrySystem>(1.0)); // Report every 1 second
     if (scenario.enable_species_index) {
         app.scheduler().add_system(std::make_unique<SpeciesIndexSystem>(storage,
                                                                         scenario.reproduction));
     }
     app.scheduler().add_system(std::make_unique<PhysicsSystem>(std::move(backend)));
-    app.scheduler().add_system(std::make_unique<StatsSystem>(1.0));
+    // StatsSystem removed - TelemetrySystem now handles metrics.
 
     spdlog::info("Scenario ready: initial population {}", scenario.initial_population);
 }
