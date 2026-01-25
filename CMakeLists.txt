@@ -10,6 +10,13 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Sanitizer option for Debug builds
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for Debug builds" OFF)
+if(ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE MATCHES Debug)
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined -fno-omit-frame-pointer")
+    set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fsanitize=address,undefined")
+endif()
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -225,6 +232,7 @@ add_library(sim_core
     sim/src/core/multi_rate_scheduler.cpp
     sim/src/core/simulation_app.cpp
     sim/src/core/scenario.cpp
+    sim/src/core/system_slices.cpp
     # ECS Systems
     sim/src/systems/brain_inference_system.cpp
     sim/src/systems/metabolism_system.cpp
@@ -235,7 +243,12 @@ add_library(sim_core
     sim/src/systems/species_index_system.cpp
     sim/src/systems/stats_system.cpp
     sim/src/systems/vision_system.cpp
+    sim/src/systems/decomposition_system.cpp
+    sim/src/systems/creature_spatial_index_system.cpp
+    sim/src/systems/social_behavior_system.cpp
     sim/src/systems/evolution_system.cpp
+    sim/src/systems/trait_analysis_system.cpp
+    sim/src/systems/speciation_system.cpp
     # Telemetry
     sim/src/telemetry/telemetry_system.cpp
     # Environment
@@ -336,6 +349,16 @@ if(BUILD_TESTS)
     tests/sim/test_feeding_system.cpp
     # tests/sim/test_telemetry_bench.cpp
     tests/sim/test_brain_behavior.cpp
+    tests/sim/test_brain_io_layout.cpp
+    tests/sim/test_scheduler_introspection.cpp
+    tests/sim/test_decomposition_system.cpp
+    tests/sim/test_social_components.cpp
+    tests/sim/test_creature_spatial_index_system.cpp
+    tests/sim/test_social_behavior_system.cpp
+    tests/sim/test_brain_social_sensors.cpp
+    tests/sim/test_genome_input_count.cpp
+    tests/sim/test_vision_ray_clamp.cpp
+    tests/sim/test_creature_behavior_slice.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE

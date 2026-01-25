@@ -84,16 +84,37 @@ void StatsSystem::emit_report(SimulationContext& context) {
 
     update_environment_stats(registry);
 
-    spdlog::info("[t={:.2f}s] entities={} metabolism={} mean_energy={:.3f} plants={} mean_plant={:.3f} soil_mean={:.3f} herbivores={} herb_mean={:.3f} feed_rate={:.3f}",
+    double biomass_plants = 0.0;
+    double biomass_consumers = 0.0;
+    double biomass_soil = 0.0;
+    double biomass_corpses = 0.0;
+    std::size_t corpses = 0;
+
+    auto pl_view = registry.view<PlantComponent>();
+    for (auto e : pl_view) if(pl_view.get<PlantComponent>(e).alive) biomass_plants += pl_view.get<PlantComponent>(e).energy;
+    
+    auto met_view = registry.view<MetabolismComponent>();
+    for (auto e : met_view) biomass_consumers += met_view.get<MetabolismComponent>(e).energy;
+
+    auto corp_view = registry.view<CorpseComponent>();
+    for (auto e : corp_view) {
+        biomass_corpses += corp_view.get<CorpseComponent>(e).biomass;
+        corpses++;
+    }
+
+    if (auto* soil = registry.ctx().find<SoilGrid>()) {
+        biomass_soil = soil->mean_nutrient() * (soil->width() * soil->height());
+    }
+
+    SPDLOG_INFO("[t={:.2f}s] Herb:{} Carn:{} Corpse:{} | BIO(k): Plant:{:.1f} Cons:{:.1f} Corpse:{:.1f} Soil:{:.1f} | Feed: {:.1f}",
                  context.simulation_time(),
-                 alive_entities,
-                 metabolism_count,
-                 mean_energy,
-                 plant_count,
-                 mean_plant_energy,
-                 soil_mean,
                  herbivore_count,
-                 mean_herbivore_energy,
+                 metabolism_count - herbivore_count,
+                 corpses,
+                 biomass_plants / 1000.0,
+                 biomass_consumers / 1000.0,
+                 biomass_corpses / 1000.0,
+                 biomass_soil / 1000.0,
                  feeding_rate);
 }
 

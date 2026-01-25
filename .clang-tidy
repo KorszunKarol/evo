@@ -1,0 +1,14 @@
+---
+Checks: >
+  *,
+  -abseil-*,
+  -google-readability-todo,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(sim/|tests/).*\.(h|cpp)$'
+CheckOptions:
+  - key: 'modernize-use-override', value: 'AllowOverrideAndFinal'
+...

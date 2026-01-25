@@ -41,7 +41,7 @@ void MultiRateScheduler::tick(SimulationContext& context) {
     const std::uint64_t current_tick_count = total_ticks_ + 1; // Anticipate the end of this tick
 
     if (current_tick_count % ticks_per_hour_ == 0) {
-        spdlog::trace("Running {} hourly systems at tick {}", hourly_systems_.size(), current_tick_count);
+        SPDLOG_TRACE("Running {} hourly systems at tick {}", hourly_systems_.size(), current_tick_count);
         for (const auto& sys : hourly_systems_) {
             sys.func(context);
         }
@@ -49,7 +49,7 @@ void MultiRateScheduler::tick(SimulationContext& context) {
         // 3. Check Daily (only if hourly also triggered, assuming day is multiple of hours)
         std::uint64_t ticks_per_day = static_cast<std::uint64_t>(ticks_per_hour_) * hours_per_day_;
         if (current_tick_count % ticks_per_day == 0) {
-            spdlog::debug("Running {} daily systems at tick {}", daily_systems_.size(), current_tick_count);
+            SPDLOG_DEBUG("Running {} daily systems at tick {}", daily_systems_.size(), current_tick_count);
             for (const auto& sys : daily_systems_) {
                 sys.func(context);
             }

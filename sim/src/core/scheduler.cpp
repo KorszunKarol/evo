@@ -10,9 +10,18 @@ void Scheduler::add_system(std::unique_ptr<ISystem> system) {
 
 void Scheduler::tick_systems(SimulationContext& context) {
     for (const auto& system : systems_) {
-        spdlog::trace("Ticking system: {}", system->name());
+        SPDLOG_TRACE("Ticking system: {}", system->name());
         system->tick(context);
     }
+}
+
+std::vector<std::string_view> Scheduler::system_names() const {
+    std::vector<std::string_view> names;
+    names.reserve(systems_.size());
+    for (const auto& system : systems_) {
+        names.push_back(system->name());
+    }
+    return names;
 }
 
 }  // namespace evolution::sim

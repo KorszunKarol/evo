@@ -25,13 +25,13 @@ void SimulationApp::run_for_steps(std::size_t steps) {
 }
 
 void SimulationApp::begin_tick() {
-    spdlog::trace("Beginning tick {} at sim time {}", tick_count_, simulation_time_);
+    SPDLOG_TRACE("Beginning tick {} at sim time {}", tick_count_, simulation_time_);
 }
 
 void SimulationApp::end_tick() {
     ++tick_count_;
     simulation_time_ += fixed_dt_;
-    spdlog::trace("Finished tick {}. New sim time {}", tick_count_, simulation_time_);
+    SPDLOG_TRACE("Finished tick {}. New sim time {}", tick_count_, simulation_time_);
 }
 
 }  // namespace evolution::sim
