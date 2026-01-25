@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/environment/environment.h"
+#include "evolution/sim/brain_io_layout.h"
 
 namespace evolution::sim {
 
@@ -105,7 +106,23 @@ void ApplyLifeStage(const evolution::genome::LifeStage& stage,
 }  // namespace
 
 BrainInferenceSystem::BrainInferenceSystem(genetics::GenomeStorage& storage) noexcept
-    : storage_(storage) {}
+    : storage_(storage),
+      input_buffer_{},
+      gating_buffer_{},
+      context_buffer_{},
+      module_buffer_{},
+      output_buffer_{},
+      max_input_capacity_{256},
+      max_module_capacity_{64},
+      max_context_capacity_{128},
+      max_module_output_capacity_{256} {
+    // Reserve capacity upfront to reduce per-entity allocations in tick loop
+    input_buffer_.reserve(max_input_capacity_);
+    gating_buffer_.reserve(max_module_capacity_);
+    context_buffer_.reserve(max_context_capacity_);
+    module_buffer_.reserve(max_module_output_capacity_);
+    output_buffer_.reserve(max_module_output_capacity_);
+}
 
 void BrainInferenceSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
@@ -199,12 +216,38 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         };
 
         const std::size_t sensor_count = static_cast<std::size_t>(brain.input_count);
-        input_buffer_.assign(sensor_count, 0.0);
+        // Zero out only the portion that's actually used (reserve capacity is fixed, so zero unused indices)
+        std::fill(input_buffer_.begin(), input_buffer_.begin() + sensor_count, input_buffer_.capacity());
+        if (sensor_count < input_buffer_.capacity()) {
+            std::fill(input_buffer_.begin() + sensor_count, input_buffer_.end(), 0.0);
+        }
         if (!input_buffer_.empty()) {
             input_buffer_[0] = context_features[0];
         }
         if (input_buffer_.size() > 1) {
-            input_buffer_[1] = std::clamp(kinematics.linear_velocity.y, -25.0, 25.0) / 25.0;
+            input_buffer_[1] = context_features[0];
+        }
+        if (input_buffer_.size() > 2) {
+            input_buffer_[2] = std::clamp(kinematics.linear_velocity.y, -25.0, 25.0) / 25.0;
+        }
+        if (input_buffer_.size() > 3) {
+            input_buffer_[3] = context_features[5];
+        }
+        if (input_buffer_.size() > 4) {
+            input_buffer_[4] = context_features[2];
+        }
+        if (input_buffer_.size() > 5) {
+            input_buffer_[5] = context_features[3];
+        }
+        if (input_buffer_.size() > 6) {
+            input_buffer_[6] = context_features[4];
+        }
+        if (input_buffer_.size() > 7) {
+            input_buffer_[7] = lifecycle.energy_scale;
+        }
+        // Clear remaining inputs to zero (preserves capacity, no reallocation)
+        if (sensor_count > 7) {
+            std::fill(input_buffer_.begin() + 7, input_buffer_.end(), 0.0);
         }
         if (input_buffer_.size() > 2) {
             input_buffer_[2] = context_features[5];
@@ -228,16 +271,17 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         // Append vision sensor inputs if entity has VisionComponent.
         const VisionComponent* vision = registry.try_get<VisionComponent>(entity);
         if (vision != nullptr && vision->enabled) {
-            const std::size_t vision_start = 8;
-            const std::size_t ray_count = vision->ray_distances.size();
-            
-            // Ray distances (indices 8 to 8 + ray_count - 1)
+            const std::size_t vision_start = kBaseSensorCount;
+            const std::size_t ray_capacity = kVisionRayCapacity;
+            const std::size_t ray_count = std::min(vision->ray_distances.size(), ray_capacity);
+
+            // Ray distances (fixed-capacity block)
             for (std::size_t r = 0; r < ray_count && (vision_start + r) < sensor_count; ++r) {
                 input_buffer_[vision_start + r] = static_cast<double>(vision->ray_distances[r]);
             }
-            
+
             // Ray hit types encoded as: 0=none, 0.25=plant, 0.5=herbivore, 0.75=carnivore, 1=terrain
-            const std::size_t hit_type_start = vision_start + ray_count;
+            const std::size_t hit_type_start = vision_start + ray_capacity;
             for (std::size_t r = 0; r < ray_count && (hit_type_start + r) < sensor_count; ++r) {
                 double type_encoding = 0.0;
                 switch (vision->ray_hit_types[r]) {
@@ -250,6 +294,29 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
                 }
                 input_buffer_[hit_type_start + r] = type_encoding;
             }
+        }
+
+        const SocialSignalsComponent* social = registry.try_get<SocialSignalsComponent>(entity);
+        if (social != nullptr) {
+            const std::size_t social_start = kBaseSensorCount + 2 * kVisionRayCapacity;
+            auto set_input = [&](std::size_t index, double value) {
+                if (index < sensor_count) {
+                    input_buffer_[index] = value;
+                }
+            };
+
+            set_input(social_start + 0, std::clamp(social->cohesion_dir.x, -1.0, 1.0));
+            set_input(social_start + 1, std::clamp(social->cohesion_dir.z, -1.0, 1.0));
+            set_input(social_start + 2, std::clamp(social->alignment_dir.x, -1.0, 1.0));
+            set_input(social_start + 3, std::clamp(social->alignment_dir.z, -1.0, 1.0));
+            set_input(social_start + 4, std::clamp(social->separation_dir.x, -1.0, 1.0));
+            set_input(social_start + 5, std::clamp(social->separation_dir.z, -1.0, 1.0));
+            set_input(social_start + 6, std::clamp(social->neighbor_density, 0.0, 1.0));
+            set_input(social_start + 7, std::clamp(social->territory_dist_norm, 0.0, 1.0));
+            set_input(social_start + 8, std::clamp(social->intruder_density, 0.0, 1.0));
+            set_input(social_start + 9, std::clamp(social->prey_dir.x, -1.0, 1.0));
+            set_input(social_start + 10, std::clamp(social->prey_dir.z, -1.0, 1.0));
+            set_input(social_start + 11, std::clamp(social->pack_density_near_prey, 0.0, 1.0));
         }
 
         const std::size_t output_count = static_cast<std::size_t>(brain.output_count);
@@ -403,7 +470,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
             eat = outputs[3] > 0.5;
         }
         if (outputs.size() > 4) {
-            attack = outputs[4] > 0.5;
+            attack = outputs[4] > 0.0; // TEMPORARY: 0.0 threshold for easier initial predation
         }
 
         actuation.impulse_x = impulse_x;
@@ -414,6 +481,17 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         actuation.update_skip = 0;
 
         brain.accumulator = std::fmod(brain.accumulator, brain.update_interval);
+
+        // Phase 4b: Neural Probe (Brain Inspection)
+        if (auto* inspect = registry.try_get<BrainInspectComponent>(entity)) {
+            inspect->input_snapshot = input_buffer_;
+            inspect->output_snapshot = outputs.empty() ? std::vector<double>{} : 
+                std::vector<double>(outputs.begin(), outputs.end());
+            inspect->internal_state = module_buffer_;
+            inspect->gating_snapshot = gating_buffer_;
+            inspect->action_mask = static_cast<std::uint8_t>(
+                (eat ? 1 : 0) | (jump ? 2 : 0) | (attack ? 4 : 0));
+        }
     }
 }
 
@@ -437,4 +515,3 @@ genetics::BrainNeat& BrainInferenceSystem::fetch_neat_runtime(genetics::GenomeId
 }
 
 }  // namespace evolution::sim
-
