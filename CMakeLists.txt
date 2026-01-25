@@ -276,3 +276,21 @@ target_compile_options(sim_tests PRIVATE -Wall -Wextra -Wpedantic)
 include(GoogleTest)
 gtest_discover_tests(sim_tests)
 
+# Test categories for local development workflows
+# Use ctest -R <pattern> to run specific test groups
+#
+# Smoke tests (fast sanity checks):
+#   ctest --test-dir build -R "Mutation.Determinism|Crossover.Determinism|RngSeedDerivation.DeterministicSameInputs|IntegrationSystemOrdering.DeterministicRun" --output-on-failure
+#
+# Determinism tests:
+#   ctest --test-dir build -R "Determinism|RngSeedDerivation|SpeciesClustering.(DeterministicSameGenomes|ReproducibleAcrossRuns)|BiomeMap.DeterministicSameSeed|WaterMap.DeterministicSameSeed" --output-on-failure
+#
+# Integration tests (cross-system):
+#   ctest --test-dir build -R "IntegrationSystemOrdering|BiomeWaterIntegration|PlantSpeciesMapping" --output-on-failure
+#
+# Performance tests:
+#   ctest --test-dir build -R "PerformanceCadence" --output-on-failure
+#
+# Run all tests:
+#   ctest --test-dir build --output-on-failure
+
