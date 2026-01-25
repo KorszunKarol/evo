@@ -10,6 +10,8 @@
 
 namespace evolution::sim {
 
+class TelemetrySystem;
+
 /**
  * @brief Applies basal metabolic drain and optionally removes exhausted entities.
  *
@@ -71,10 +73,13 @@ public:
      */
     void set_destroy_on_zero(bool enabled) noexcept { destroy_on_zero_ = enabled; }
 
+    void set_telemetry(TelemetrySystem* telemetry) noexcept { telemetry_ = telemetry; }
+
 private:
     static constexpr std::string_view name_ = "metabolism";
     bool destroy_on_zero_{true};
     std::vector<entt::entity> recycle_bin_{};
+    TelemetrySystem* telemetry_{nullptr};
 };
 
 }  // namespace evolution::sim

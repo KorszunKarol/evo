@@ -27,7 +27,9 @@ SpatialHash::SpatialHash(double cell_size) noexcept
     : cell_size_(std::max(0.1, cell_size)), inv_cell_size_(1.0 / std::max(0.1, cell_size)) {}
 
 void SpatialHash::clear() {
-    cells_.clear();
+    for (auto& [key, occupants] : cells_) {
+        occupants.clear();
+    }
 }
 
 void SpatialHash::insert(entt::entity entity, const WorldAabb& bounds) {

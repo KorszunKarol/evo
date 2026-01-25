@@ -5,10 +5,138 @@
 #include "evolution/sim/components.h"
 #include "evolution/sim/environment/feeding_system.h"
 #include "evolution/sim/environment/plant_systems.h"
+#include "evolution/sim/physics/backend.h"
 #include "evolution/sim/simulation_context.h"
 
 using namespace evolution::sim::test;
 using namespace evolution::sim;
+
+namespace {
+
+/**
+ * @brief Minimal physics backend stub for feeding tests.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1) for all methods; contact_events() is O(1) span access.
+ * @note Only contact_events() is used by FeedingSystem in these tests.
+ * @warning Not a full physics implementation; use for tests only.
+ * @threadsafe @notthreadsafe.
+ */
+class TestPhysicsBackend final : public IPhysicsBackend {
+public:
+    /**
+     * @brief Sets the contact events returned by the backend.
+     * @param events Vector of contact events to expose.
+     * @return None.
+     * @throws None.
+     * @complexity O(N) to copy N events.
+     * @note Replaces any previously stored events.
+     * @warning Intended only for test setups.
+     * @threadsafe @notthreadsafe.
+     */
+    void set_contact_events(std::vector<ContactEvent> events) {
+        events_ = std::move(events);
+    }
+
+    /**
+     * @brief Applies configuration parameters (no-op).
+     * @param config const Config& Configuration struct.
+     * @return None.
+     * @throws None.
+     * @complexity O(1).
+     * @note Configuration is ignored for this test stub.
+     * @warning No validation performed.
+     * @threadsafe @notthreadsafe.
+     */
+    void configure(const Config& config) override {
+        (void)config;
+    }
+
+    /**
+     * @brief Synchronizes with registry (no-op).
+     * @param registry entt::registry& Registry to sync.
+     * @return None.
+     * @throws None.
+     * @complexity O(1).
+     * @note Not used in these tests.
+     * @warning No physics state is tracked.
+     * @threadsafe @notthreadsafe.
+     */
+    void sync_from_registry(entt::registry& registry) override {
+        (void)registry;
+    }
+
+    /**
+     * @brief Advances the simulation (no-op).
+     * @param registry entt::registry& Registry to update.
+     * @param dt double Timestep in seconds.
+     * @return None.
+     * @throws None.
+     * @complexity O(1).
+     * @note Contact events are provided externally via set_contact_events().
+     * @warning Does not mutate registry.
+     * @threadsafe @notthreadsafe.
+     */
+    void step(entt::registry& registry, double dt) override {
+        (void)registry;
+        (void)dt;
+    }
+
+    /**
+     * @brief Performs a raycast (always returns std::nullopt).
+     * @param origin Vec3 Ray origin.
+     * @param direction Vec3 Ray direction.
+     * @param max_distance double Max distance.
+     * @return std::optional<ContactEvent> Always std::nullopt.
+     * @throws None.
+     * @complexity O(1).
+     * @note Vision is not exercised in these tests.
+     * @warning No scene geometry is stored.
+     * @threadsafe @notthreadsafe.
+     */
+    [[nodiscard]] std::optional<ContactEvent> raycast(const Vec3& origin,
+                                                      const Vec3& direction,
+                                                      double max_distance) const override {
+        (void)origin;
+        (void)direction;
+        (void)max_distance;
+        return std::nullopt;
+    }
+
+    /**
+     * @brief Returns contact events set for the test.
+     * @param None.
+     * @return std::span<const ContactEvent> View of contact events.
+     * @throws None.
+     * @complexity O(1).
+     * @note Events are supplied by set_contact_events().
+     * @warning Span invalidated when events are replaced.
+     * @threadsafe @notthreadsafe.
+     */
+    [[nodiscard]] std::span<const ContactEvent> contact_events() const override {
+        return std::span<const ContactEvent>(events_);
+    }
+
+    /**
+     * @brief Returns diagnostic stats (zeroed).
+     * @param None.
+     * @return Stats Zeroed counters.
+     * @throws None.
+     * @complexity O(1).
+     * @note No actual physics simulation is performed.
+     * @warning Values are not meaningful.
+     * @threadsafe @notthreadsafe.
+     */
+    [[nodiscard]] Stats stats() const override {
+        return Stats{};
+    }
+
+private:
+    std::vector<ContactEvent> events_{};
+};
+
+}  // namespace
 
 TEST(FeedingSystem, HerbivoreConsumesPlant) {
     SimulationFixture fixture;
@@ -134,6 +262,13 @@ TEST(FeedingSystem, CarnivoreConsumesPrey) {
     auto& p_metab = registry.get<MetabolismComponent>(prey);
     p_metab.energy = 50.0;
 
+    TestPhysicsBackend backend;
+    backend.set_contact_events({IPhysicsBackend::ContactEvent{.entity_a = carnivore,
+                                                              .entity_b = prey,
+                                                              .stay = true}});
+    IPhysicsBackend* backend_ptr = &backend;
+    registry.ctx().emplace<IPhysicsBackend*>(backend_ptr);
+
     // 3. Tick
     SimulationContext context(registry, 0.1, 0.0); // dt=0.1
     feeding_system.tick(context);
@@ -168,6 +303,11 @@ TEST(FeedingSystem, CarnivoreIgnoresDistantPrey) {
     auto& p_metab = registry.get<MetabolismComponent>(prey);
     p_metab.energy = 50.0;
 
+    TestPhysicsBackend backend;
+    backend.set_contact_events({});
+    IPhysicsBackend* backend_ptr = &backend;
+    registry.ctx().emplace<IPhysicsBackend*>(backend_ptr);
+
     SimulationContext context(registry, 0.1, 0.0);
     feeding_system.tick(context);
 
@@ -201,6 +341,13 @@ TEST(FeedingSystem, CarnivoreRequiresAttackIntent) {
     entt::entity prey = fixture.spawn_herbivore(p_pos, fixture.create_test_genome(2));
     auto& p_metab = registry.get<MetabolismComponent>(prey);
     p_metab.energy = 50.0;
+
+    TestPhysicsBackend backend;
+    backend.set_contact_events({IPhysicsBackend::ContactEvent{.entity_a = carnivore,
+                                                              .entity_b = prey,
+                                                              .stay = true}});
+    IPhysicsBackend* backend_ptr = &backend;
+    registry.ctx().emplace<IPhysicsBackend*>(backend_ptr);
 
     SimulationContext context(registry, 0.1, 0.0);
     feeding_system.tick(context);
@@ -240,6 +387,13 @@ TEST(FeedingSystem, CarnivoreAttackCooldown) {
     entt::entity prey = fixture.spawn_herbivore(p_pos, fixture.create_test_genome(2));
     auto& p_metab = registry.get<MetabolismComponent>(prey);
     p_metab.energy = 50.0;
+
+    TestPhysicsBackend backend;
+    backend.set_contact_events({IPhysicsBackend::ContactEvent{.entity_a = carnivore,
+                                                              .entity_b = prey,
+                                                              .stay = true}});
+    IPhysicsBackend* backend_ptr = &backend;
+    registry.ctx().emplace<IPhysicsBackend*>(backend_ptr);
 
     SimulationContext context(registry, 0.1, 0.0);
     feeding_system.tick(context);

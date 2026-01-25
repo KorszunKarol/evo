@@ -154,6 +154,69 @@ struct MetabolismComponent {
 
 ---
 
+### TerritoryComponent Access
+
+**Read Contract**:
+- **Readers**: SocialBehaviorSystem
+- **Read Fields**: `center`, `radius`, `initialized`
+- **Read Frequency**: Every tick (social behaviors)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: SocialBehaviorSystem
+- **Write Fields**: `center`, `radius`, `initialized`
+- **Write Frequency**: On first tick for each entity; radius may be normalized if unset
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct TerritoryComponent {
+    Vec3 center;        // World-space anchor
+    double radius;      // Meters, > 0
+    bool initialized;   // True once center is set
+};
+```
+
+**Guarantees**:
+- `center` is initialized deterministically on first social tick
+- `radius` is clamped to a positive default if unset
+
+---
+
+### SocialSignalsComponent Access
+
+**Read Contract**:
+- **Readers**: BrainInferenceSystem
+- **Read Fields**: All social signal fields
+- **Read Frequency**: Every tick before brain inference
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: SocialBehaviorSystem
+- **Write Fields**: All social signal fields
+- **Write Frequency**: Every tick
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct SocialSignalsComponent {
+    Vec3 cohesion_dir;          // Normalized XZ
+    Vec3 alignment_dir;         // Normalized XZ
+    Vec3 separation_dir;        // Normalized XZ
+    double neighbor_density;    // [0, 1]
+    double territory_dist_norm; // [0, 1]
+    double intruder_density;    // [0, 1]
+    Vec3 prey_dir;              // Normalized XZ
+    double pack_density_near_prey; // [0, 1]
+};
+```
+
+**Guarantees**:
+- All values are normalized to the ranges shown
+- Unavailable signals are zeroed each tick
+
+---
+
 ### GenomeHandleComponent Access
 
 **Read Contract**:
@@ -199,6 +262,27 @@ struct GenomeHandleComponent {
 - **Method**: `Scheduler::add_system(std::unique_ptr<ISystem>)`
 - **Order**: Systems execute in registration order
 - **Ownership**: Scheduler owns system instances
+
+### Creature Behavior Slice Order
+
+**Required Order**:
+1. `VisionSystem`
+2. `CreatureSpatialIndexSystem`
+3. `SocialBehaviorSystem`
+4. `BrainInferenceSystem`
+5. `MotorSystem`
+6. `DecompositionSystem`
+7. `MetabolismSystem`
+
+**Rationale**:
+- Vision must populate ray data before brain inference.
+- Creature spatial index must be rebuilt before any neighbor queries.
+- Social signals must be computed before brain inference.
+- Motor consumes actuation after brain outputs.
+- Decomposition and metabolism consume and recycle energy after actions.
+
+**Guarantees**:
+- The slice is registered as a single helper to prevent drift between entrypoints.
 - **Thread Safety**: Single-threaded (setup phase)
 
 **Guarantees**:
@@ -537,4 +621,3 @@ FeedingSystem
 - **Update Frequency**: Periodic snapshots (not every tick)
 - **Delta Compression**: Only changed components transmitted
 - **Consistency**: Deterministic simulation ensures consistency
-

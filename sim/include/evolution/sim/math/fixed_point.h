@@ -83,11 +83,11 @@ public:
     }
 
     Fixed64 operator/(const Fixed64& rhs) const {
-        if (rhs.value_ == 0) {
-            // Divide-by-zero is undefined behavior; trap with assert in debug builds.
-            // Production builds may return 0, but this is a bug in calling code.
+        if (rhs.value_ == 0) [[unlikely]] {
+            // Division by zero is a critical error that produces invalid simulation state.
+            // This terminates the program to prevent silent corruption of deterministic results.
             assert(rhs.value_ != 0 && "Fixed64::operator/ division by zero");
-            return from_raw(0);
+            std::terminate();
         }
         __int128 numerator = static_cast<__int128>(value_) << FractionalBits;
         return from_raw(static_cast<RawType>(numerator / rhs.value_));

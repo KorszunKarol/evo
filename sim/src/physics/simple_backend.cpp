@@ -504,6 +504,10 @@ void SimplePhysicsBackend::integrate_forces(double dt) {
 }
 
 void SimplePhysicsBackend::integrate_velocities(double dt) {
+    constexpr double kMaxVelocity = 50.0;  // 50 m/s max to prevent explosions
+    constexpr double kTerrainMin = -10.0;  // Small buffer below terrain
+    constexpr double kTerrainMax = 200.0;  // Safety bound
+    
     for (auto& body : bodies_) {
         if (!body.transform || !body.kinematics) {
             continue;
@@ -511,7 +515,19 @@ void SimplePhysicsBackend::integrate_velocities(double dt) {
         if (body.body_flags && (body.body_flags->is_static || body.body_flags->is_kinematic)) {
             continue;
         }
-        body.transform->position += body.kinematics->linear_velocity * dt;
+        
+        // Clamp velocities to prevent blowup
+        auto& vel = body.kinematics->linear_velocity;
+        vel.x = std::clamp(vel.x, -kMaxVelocity, kMaxVelocity);
+        vel.y = std::clamp(vel.y, -kMaxVelocity, kMaxVelocity);
+        vel.z = std::clamp(vel.z, -kMaxVelocity, kMaxVelocity);
+        
+        body.transform->position += vel * dt;
+        
+        // Clamp positions to terrain bounds (safety net)
+        body.transform->position.x = std::clamp(body.transform->position.x, kTerrainMin, kTerrainMax);
+        body.transform->position.y = std::clamp(body.transform->position.y, kTerrainMin, kTerrainMax);
+        body.transform->position.z = std::clamp(body.transform->position.z, kTerrainMin, kTerrainMax);
     }
 }
 

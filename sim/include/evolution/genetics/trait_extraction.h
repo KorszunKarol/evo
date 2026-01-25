@@ -50,5 +50,18 @@ namespace evolution::genetics {
 [[nodiscard]] double TraitCosineDistance(const std::array<double, 8>& a,
                                          const std::array<double, 8>& b) noexcept;
 
+/**
+ * @brief Extract extended feature vector for speciation clustering.
+ * @param genome Immutable genome table view.
+ * @return Array of 16 normalized features for clustering.
+ * @throws None.
+ * @complexity O(1).
+ * @note Features: size_x/y/z, density, diet_type, basal_rate_norm, max_energy_norm,
+ *       brain_layers, mlp_hidden_size, vision_range_norm, vision_fov_norm, color_r/g/b, age_scale, energy_scale.
+ * @warning Values normalized to [0,1] range.
+ * @threadsafe @notthreadsafe.
+ */
+[[nodiscard]] std::array<double, 16> ExtractSpeciationFeatures(const evolution::genome::Genome& genome) noexcept;
+
 }  // namespace evolution::genetics
 

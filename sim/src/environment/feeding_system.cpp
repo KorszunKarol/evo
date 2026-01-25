@@ -53,6 +53,7 @@ void FeedingSystem::tick(SimulationContext& context) {
                 auto* diet = registry.try_get<DietComponent>(attacker);
                 auto* actuation = registry.try_get<ActuationComponent>(attacker);
                 auto* metabolism = registry.try_get<MetabolismComponent>(attacker);
+                auto* intent = registry.try_get<FeedingIntent>(attacker);
                 
                 if (!diet || diet->type != DietType::Carnivore || !actuation || !metabolism) return;
                 if (!actuation->attack) return;
@@ -78,7 +79,10 @@ void FeedingSystem::tick(SimulationContext& context) {
                         }
                     }
 
-                    const double transferable = std::min({25.0 * dt * momentum_bonus, remaining_capacity, victim_metabolism->energy});
+                    const double base_rate = intent ? intent->rate : 25.0;
+                    const double transferable = std::min({base_rate * dt * momentum_bonus,
+                                                          remaining_capacity,
+                                                          victim_metabolism->energy});
                     if (transferable > 0.0) {
                         metabolism->energy += transferable;
                         victim_metabolism->energy -= transferable;

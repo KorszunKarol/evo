@@ -18,6 +18,8 @@
 
 namespace evolution::sim {
 
+class TelemetrySystem;
+
 /**
  * @brief System that handles sexual reproduction with preference-based mate selection.
  * @param None.
@@ -45,6 +47,8 @@ public:
     explicit ReproductionSystem(genetics::GenomeStorage& storage,
                                  const genetics::ReproConfig& config,
                                  std::uint64_t global_seed) noexcept;
+    
+
 
     /**
      * @brief Process reproduction opportunities for eligible entities.
@@ -100,6 +104,7 @@ private:
         const evolution::genome::Genome& candidate_genome) const noexcept;
 
     [[nodiscard]] bool AttemptReproduction(
+        double sim_time,
         entt::registry& registry,
         entt::entity parent_a,
         entt::entity parent_b,
@@ -113,6 +118,10 @@ private:
     std::vector<CandidateMate> candidate_buffer_{};
     mutable std::vector<double> preference_input_buffer_{};
     mutable std::vector<double> preference_output_buffer_{};
+    TelemetrySystem* telemetry_{nullptr};
+
+public:
+    void set_telemetry(TelemetrySystem* telemetry) noexcept { telemetry_ = telemetry; }
 };
 
 }  // namespace evolution::sim

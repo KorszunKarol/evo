@@ -63,6 +63,18 @@ public:
     ///
     void tick_systems(SimulationContext& context);
 
+    /**
+     * @brief Returns system names in registration order.
+     * @param None.
+     * @return Ordered list of system names.
+     * @note Intended for diagnostics and tests only.
+     * @warning Do not use for scheduling logic in production.
+     * @threadsafe Not thread-safe; call only during setup or when scheduler is idle.
+     * @complexity O(N) where N is the number of registered systems.
+     * @throws None.
+     */
+    [[nodiscard]] std::vector<std::string_view> system_names() const;
+
 private:
     /// @brief Ordered list of systems invoked each tick.
     std::vector<std::unique_ptr<ISystem>> systems_;

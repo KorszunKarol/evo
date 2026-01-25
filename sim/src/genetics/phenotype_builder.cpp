@@ -8,6 +8,7 @@
 
 #include "evolution/genetics/derived_traits.h"
 #include "evolution/sim/components.h"
+#include "evolution/sim/brain_io_layout.h"
 
 namespace evolution::genetics {
 
@@ -96,14 +97,15 @@ void ConfigureBrainComponent(sim::BrainComponent& brain, const evolution::genome
 void ConfigureMetabolism(sim::MetabolismComponent& metabolism, const DerivedTraits& traits) {
     metabolism.max_energy = std::max(50.0, traits.mass * 140.0);
     metabolism.energy = metabolism.max_energy;
-    metabolism.basal_rate = std::max(0.05, traits.basal_rate + traits.brain_cost);
+    metabolism.basal_rate = std::max(0.05, (traits.basal_rate + traits.brain_cost) * 0.8);
 }
 
 void ConfigureReproduction(sim::ReproductionComponent& reproduction, const DerivedTraits& traits) {
     reproduction.cooldown = std::max(5.0, traits.mass * 2.0);
     reproduction.timer = reproduction.cooldown;
     reproduction.mate_radius = std::clamp(traits.mass * 1.5, 2.0, 8.0);
-    reproduction.energy_threshold = std::max(120.0, traits.mass * 100.0);
+    // Threshold set to ~60% of max energy (mass * 140) to make reproduction achievable
+    reproduction.energy_threshold = std::max(30.0, traits.mass * 84.0);
 }
 
 void BuildBodyRecursive(entt::registry& registry,
@@ -252,16 +254,7 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
 
     auto& metabolism = registry.emplace_or_replace<sim::MetabolismComponent>(entity);
     ConfigureMetabolism(metabolism, result.traits);
-
-    registry.emplace_or_replace<sim::GenomeHandleComponent>(entity, sim::GenomeHandleComponent{id});
-    registry.emplace_or_replace<sim::ActuationComponent>(entity);
-
-    auto& brain = registry.emplace_or_replace<sim::BrainComponent>(entity);
-    ConfigureBrainComponent(brain, *genome);
-
-    auto& reproduction = registry.emplace_or_replace<sim::ReproductionComponent>(entity);
-    ConfigureReproduction(reproduction, result.traits);
-
+    
     // Diet configuration from genome
     auto& diet = registry.emplace_or_replace<sim::DietComponent>(entity);
     switch (genome->diet()) {
@@ -270,12 +263,19 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
             registry.emplace_or_replace<sim::CarnivoreTag>(entity);
             // Add combat component for tracking attack cooldowns
             registry.emplace_or_replace<sim::CombatComponent>(entity, sim::CombatComponent{
-                .attack_cooldown = 1.0,
+                .attack_cooldown = 0.8, // Faster cooldown to help early predators
                 .attack_timer = 0.0,
                 .target = entt::null,
                 .pursuing = false,
                 .damage_dealt = 0.0
             });
+            
+            // REDUCE BASAL RATE for carnivores (Phase 1 Tuning)
+            // This allows them to survive longer between successful kills.
+            metabolism.basal_rate *= 0.5; 
+            // GIVE CARNIVORES MORE STARTING ENERGY (Phase 7 Fix)
+            // Helps them survive while hunting for first prey.
+            metabolism.energy *= 1.5;
             break;
         case evolution::genome::DietPreference::Omnivore:
             // Future: omnivores could eat both with reduced efficiency
@@ -289,13 +289,31 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
             break;
     }
 
+    registry.emplace_or_replace<sim::GenomeHandleComponent>(entity, sim::GenomeHandleComponent{id});
+    registry.emplace_or_replace<sim::ActuationComponent>(entity);
+    
+    // Configure locomotion traits from genome
+    auto& locomotion = registry.emplace_or_replace<sim::LocomotionComponent>(entity);
+    if (const auto* loco = genome->locomotion()) {
+        locomotion.muscle_strength = static_cast<double>(loco->muscle_strength());
+        locomotion.turn_agility = static_cast<double>(loco->turn_agility());
+        locomotion.jump_power = static_cast<double>(loco->jump_power());
+        locomotion.sprint_multiplier = static_cast<double>(loco->sprint_multiplier());
+    }
+
+    auto& brain = registry.emplace_or_replace<sim::BrainComponent>(entity);
+    ConfigureBrainComponent(brain, *genome);
+
+    auto& reproduction = registry.emplace_or_replace<sim::ReproductionComponent>(entity);
+    ConfigureReproduction(reproduction, result.traits);
+
     // Configure feeding intent based on diet type
-    const bool is_carnivore = (diet.type == sim::DietType::Carnivore);
-    const double feed_reach = is_carnivore 
-        ? std::max(1.0, static_cast<double>(genome->attack_reach()))
+    const bool is_carnivore_active = (diet.type == sim::DietType::Carnivore);
+    const double feed_reach = is_carnivore_active 
+        ? std::max(2.0, static_cast<double>(genome->attack_reach()) * 1.5) // Buff reach
         : 1.5;
-    const double feed_rate = is_carnivore
-        ? std::max(5.0, static_cast<double>(genome->attack_power()))
+    const double feed_rate = is_carnivore_active
+        ? std::max(12.0, static_cast<double>(genome->attack_power()) * 2.0) // Buff power
         : 10.0;
     
     registry.emplace_or_replace<sim::FeedingIntent>(entity, sim::FeedingIntent{
@@ -348,11 +366,21 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
     fitness.offspring_count = 0;
     fitness.last_fitness = 0.0;
 
-    // Add VisionComponent by default for spatial awareness
+    // Add VisionComponent using genome sensory traits
+    float vision_range = 10.0f;
+    float vision_fov = 1.57f;
+    std::uint8_t vision_rays = 5;
+    if (const auto* sensory = genome->sensory()) {
+        vision_range = sensory->vision_range();
+        vision_fov = sensory->vision_fov();
+        vision_rays = sensory->vision_rays();
+    }
+    vision_rays = static_cast<std::uint8_t>(
+        std::min<std::size_t>(vision_rays, evolution::sim::kVisionRayCapacity));
     registry.emplace_or_replace<sim::VisionComponent>(entity, sim::VisionComponent{
-        .fov_radians = 1.57f,  // 90 degrees
-        .ray_count = 5,
-        .max_range = 10.0f,
+        .fov_radians = vision_fov,
+        .ray_count = vision_rays,
+        .max_range = vision_range,
         .enabled = true
     });
 
@@ -362,5 +390,3 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
 }
 
 }  // namespace evolution::genetics
-
-

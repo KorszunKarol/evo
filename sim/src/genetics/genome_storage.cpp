@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/genetics/derived_traits.h"
+#include "evolution/sim/brain_io_layout.h"
 
 namespace evolution::genetics {
 
@@ -86,9 +87,9 @@ void PopulateBodyNode(evolution::genome::BodyNodeT& node, Pcg32& rng, int depth 
 }
 
 void PopulateMlp(evolution::genome::MLPT& mlp, Pcg32& rng) {
-    mlp.input_count = 8;
-    mlp.output_count = 4;
-    mlp.hidden_layers = {16, 16};
+    mlp.input_count = static_cast<std::uint32_t>(evolution::sim::kTotalInputCount);
+    mlp.output_count = 5;  // +1 for attack
+    mlp.hidden_layers = {24, 16}; // Increased capacity
     mlp.update_rate_hz = RandomBetween(rng, 3.0f, 10.0f);
 
     const auto layer_sizes = [&]() {
@@ -121,8 +122,8 @@ void PopulateMlp(evolution::genome::MLPT& mlp, Pcg32& rng) {
 }
 
 void PopulateNeat(evolution::genome::NEATT& neat, Pcg32& rng) {
-    neat.input_count = 8;
-    neat.output_count = 4;
+    neat.input_count = static_cast<std::uint32_t>(evolution::sim::kTotalInputCount);
+    neat.output_count = 5; // +1 for attack
     neat.update_rate_hz = RandomBetween(rng, 3.0f, 10.0f);
 
     std::uint32_t next_id = 0;
@@ -207,6 +208,21 @@ GenomeId GenomeStorage::create_random(std::uint64_t seed) {
     genome.parents.clear();
 
     Pcg32 rng(seed);
+    
+    // Randomly assign diet type (~15% carnivore, 85% herbivore)
+    if (rng.next_unit() < 0.15) {
+        genome.diet = evolution::genome::DietPreference::Carnivore;
+        // Carnivores have stronger attack traits
+        genome.attack_reach = RandomBetween(rng, 1.5f, 2.5f);
+        genome.attack_power = RandomBetween(rng, 6.0f, 12.0f);
+        genome.speed_trait = RandomBetween(rng, 1.0f, 1.4f);  // Slightly faster
+    } else {
+        genome.diet = evolution::genome::DietPreference::Herbivore;
+        // Herbivores have default/weaker combat traits
+        genome.attack_reach = RandomBetween(rng, 1.0f, 1.5f);
+        genome.attack_power = RandomBetween(rng, 3.0f, 6.0f);
+        genome.speed_trait = RandomBetween(rng, 0.9f, 1.2f);
+    }
 
     genome.body = std::make_unique<evolution::genome::BodyNodeT>();
     PopulateBodyNode(*genome.body, rng);
@@ -378,6 +394,33 @@ GenomeId GenomeStorage::create_random(std::uint64_t seed) {
     adult->reproduction_allowed = true;
     genome.life_stages.push_back(std::move(adult));
 
+    // ========================================================================
+    // Randomize new trait tables for initial genetic variance
+    // ========================================================================
+    genome.sensory = std::make_unique<evolution::genome::SensoryTraitsT>();
+    genome.sensory->vision_range = RandomBetween(rng, 8.0f, 15.0f);
+    genome.sensory->vision_fov = RandomBetween(rng, 1.2f, 2.0f);  // 70-115 degrees
+    genome.sensory->vision_rays = static_cast<std::uint8_t>(3 + rng.next_u32() % 6);  // 3-8
+    genome.sensory->chemical_range = RandomBetween(rng, 3.0f, 8.0f);
+
+    genome.locomotion = std::make_unique<evolution::genome::LocomotionTraitsT>();
+    genome.locomotion->muscle_strength = RandomBetween(rng, 0.8f, 1.3f);
+    genome.locomotion->turn_agility = RandomBetween(rng, 0.8f, 1.2f);
+    genome.locomotion->jump_power = RandomBetween(rng, 0.5f, 1.2f);
+    genome.locomotion->sprint_multiplier = RandomBetween(rng, 1.0f, 1.3f);
+
+    genome.metabolism = std::make_unique<evolution::genome::MetabolismTraitsT>();
+    genome.metabolism->basal_modifier = RandomBetween(rng, 0.8f, 1.2f);
+    genome.metabolism->digestion_efficiency = RandomBetween(rng, 0.9f, 1.1f);
+    genome.metabolism->energy_capacity_scale = RandomBetween(rng, 0.9f, 1.2f);
+    genome.metabolism->starvation_tolerance = RandomBetween(rng, 0.8f, 1.2f);
+
+    genome.behavior = std::make_unique<evolution::genome::BehaviorBiasT>();
+    genome.behavior->aggression = RandomBetween(rng, -0.3f, 0.3f);
+    genome.behavior->exploration = RandomBetween(rng, -0.3f, 0.3f);
+    genome.behavior->sociality = RandomBetween(rng, -0.3f, 0.3f);
+    genome.behavior->fear = RandomBetween(rng, 0.3f, 0.7f);
+
     const DerivedTraits traits = ComputeDerivedTraits(genome);
     genome.cached = std::make_unique<evolution::genome::TraitsCacheT>(MakeTraitsCache(traits));
 
@@ -435,4 +478,3 @@ GenomeId GenomeStorage::insert_buffer(Buffer buffer) {
 }
 
 }  // namespace evolution::genetics
-

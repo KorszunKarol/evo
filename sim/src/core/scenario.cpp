@@ -21,6 +21,7 @@
 #include "evolution/sim/stats_system.h"
 #include "evolution/sim/telemetry_system.h"
 #include "evolution/sim/vision_system.h"
+#include "evolution/sim/system_slices.h"
 
 namespace evolution::sim {
 
@@ -100,10 +101,7 @@ void setup_scenario(SimulationApp& app,
     app.scheduler().add_system(std::make_unique<PlantSpatialSystem>());
     app.scheduler().add_system(std::make_unique<FeedingSystem>());
     app.scheduler().add_system(std::make_unique<PlantCleanupSystem>());
-    app.scheduler().add_system(std::make_unique<VisionSystem>(*backend_ptr));
-    app.scheduler().add_system(std::make_unique<BrainInferenceSystem>(storage));
-    app.scheduler().add_system(std::make_unique<MotorSystem>());
-    app.scheduler().add_system(std::make_unique<MetabolismSystem>());
+    RegisterCreatureBehaviorSlice(app.scheduler(), storage, *backend_ptr);
     app.scheduler().add_system(std::make_unique<FitnessUpdateSystem>());
     app.scheduler().add_system(std::make_unique<ReproductionSystem>(storage,
                                                                     scenario.reproduction,
@@ -121,5 +119,3 @@ void setup_scenario(SimulationApp& app,
 }
 
 }  // namespace evolution::sim
-
-

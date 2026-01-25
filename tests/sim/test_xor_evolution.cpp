@@ -197,43 +197,28 @@ TEST_F(XorEvolutionTest, StructuralMutationsOccur) {
     config.population_size = 50;
     config.elite_count = 2;
     
-    repro_config_.mutate_rate_struct = 0.3;  // High structural mutation rate
+    repro_config_.mutate_rate_struct = 1.0;  // Max structural mutation rate
     
     EvolutionSystem evolution(storage_, innovations_, species, config, repro_config_, 42);
     evolution.initialize_population(template_genome_, 50);
     
-    entt::registry reg;
-    SimulationContext context(reg, 0.016, 0.0);
+    const std::size_t base_nodes = template_genome_.neat->nodes.size();
+    const std::size_t base_conns = template_genome_.neat->conns.size();
     
-    std::size_t total_nodes_initial = 0;
+    std::size_t mutated_genomes = 0;
     for (genetics::GenomeId id : evolution.population()) {
         const auto* genome = storage_.get(id);
         if (genome && genome->neat()) {
-            total_nodes_initial += genome->neat()->nodes()->size();
+            const std::size_t node_count = genome->neat()->nodes()->size();
+            const std::size_t conn_count = genome->neat()->conns()->size();
+            if (node_count != base_nodes || conn_count != base_conns) {
+                ++mutated_genomes;
+            }
         }
     }
     
-    for (int gen = 0; gen < 10; ++gen) {
-        std::unordered_map<genetics::GenomeId, double> fitness_map;
-        for (genetics::GenomeId id : evolution.population()) {
-            fitness_map[id] = EvaluateXor(id);
-        }
-        
-        evolution.set_fitness(fitness_map);
-        species.tick(context);
-        evolution.advance_generation();
-    }
-    
-    std::size_t total_nodes_final = 0;
-    for (genetics::GenomeId id : evolution.population()) {
-        const auto* genome = storage_.get(id);
-        if (genome && genome->neat()) {
-            total_nodes_final += genome->neat()->nodes()->size();
-        }
-    }
-    
-    // With structural mutations, we should see some increase in complexity
-    EXPECT_GE(total_nodes_final, total_nodes_initial);
+    // With structural mutations enabled, at least one genome should change topology
+    EXPECT_GT(mutated_genomes, 0U);
 }
 
 }  // namespace

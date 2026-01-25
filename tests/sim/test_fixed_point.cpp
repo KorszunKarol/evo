@@ -66,15 +66,16 @@ TEST(FixedPointTest, Precision) {
 
     TEST(FixedPointTest, DivideByZero) {
         Fixed64 a(1.0);
-        Fixed64 zero(0.0);
-
-        // Division by zero returns 0 (documented undefined behavior)
-        Fixed64 result = a / zero;
-        EXPECT_DOUBLE_EQ(result.to_double(), 0.0);
-
-        // Verify division still works correctly in general
         Fixed64 b(2.0);
+
+        // Verify division works correctly for non-zero divisors
         Fixed64 result2 = a / b;
         EXPECT_DOUBLE_EQ(result2.to_double(), 0.5);
+
+        // Note: Division by zero now terminates the program to prevent
+        // silent corruption of deterministic simulation results.
+        // This is a critical safety feature - attempting to divide by zero
+        // will call std::terminate(). Do not test it directly as it
+        // would kill the test runner.
     }
 

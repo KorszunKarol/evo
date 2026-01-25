@@ -1,0 +1,77 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build-type: [Release, Debug]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libspdlog-dev \
+            nlohmann-json3-dev \
+            git
+
+      - name: Configure
+        run: |
+          mkdir build
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build-type }}
+
+      - name: Build
+        run: |
+          cmake --build build -j$(nproc)
+
+      - name: Test
+        run: |
+          cd build
+          ctest --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libspdlog-dev \
+            nlohmann-json3-dev \
+            git
+
+      - name: Configure with sanitizers
+        run: |
+          mkdir build-asan
+          cmake -S . -B build-asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_SANITIZERS=ON
+
+      - name: Build with sanitizers
+        run: |
+          cmake --build build-asan -j$(nproc)
+
+      - name: Test with sanitizers
+        run: |
+          cd build-asan
+          ctest --output-on-failure

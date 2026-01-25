@@ -135,6 +135,15 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
     std::uniform_real_distribution<double> energy_dist(3.0, 8.0);
     std::uniform_real_distribution<double> probability(0.0, 1.0);
 
+    // Global Plant Cap Check
+    const auto active_plants = registry.view<PlantComponent>().size();
+    if (active_plants >= 20000) {
+        update_environment_stats(registry);
+        return;
+    }
+
+    const auto* spatial_index = registry.ctx().find<PlantSpatialIndex>();
+
     auto view = registry.view<TransformComponent, PlantComponent, PlantSeedParams>();
 
     for (auto entity : view) {
@@ -153,6 +162,11 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         }
 
         plant.seed_timer = 0.0;
+        
+        // Probabilistic early exit to reduce checking cost at high counts
+        if (active_plants > 10000 && probability(rng_) > 0.1) {
+             continue; // Throttle seeding as we approach cap
+        }
 
         const double angle = angle_dist(rng_);
         const double radius = std::sqrt(radius_dist(rng_)) * params.seed_radius;
@@ -161,9 +175,23 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
 
         const double target_x = transform.position.x + offset_x;
         const double target_z = transform.position.z + offset_z;
-
+        
+        // ... (Bounds checks remain the same) ...
         const double world_x = std::clamp(target_x, 0.0, static_cast<double>(terrain.width() - 1) * terrain.cell_size());
         const double world_z = std::clamp(target_z, 0.0, static_cast<double>(terrain.height_cells() - 1) * terrain.cell_size());
+        
+        // Density Check using Spatial Index
+        if (spatial_index != nullptr) {
+            bool too_crowded = false;
+            // Check radius slightly smaller than plant radius to allow some packing but not overlap
+            const double check_radius = plant.radius * 0.8; 
+            spatial_index->for_each_in_radius(registry, Vec3{world_x, 0.0, world_z}, check_radius, 
+                [&too_crowded](entt::entity, double) {
+                    too_crowded = true;
+                });
+            if (too_crowded) continue;
+        }
+
         const Vec3 normal = terrain.normal(world_x, world_z);
         if (normal.y < 0.45) {
             continue;

@@ -12,10 +12,15 @@ PhysicsSystem::PhysicsSystem(std::unique_ptr<IPhysicsBackend> backend)
 }
 
 void PhysicsSystem::tick(SimulationContext& context) {
-    backend_->sync_from_registry(context.registry());
-    backend_->step(context.registry(), context.fixed_dt());
+    auto& registry = context.registry();
+    
+    // PHASE 3: Expose backend to context for other systems (e.g. FeedingSystem)
+    // to query contact events.
+    registry.ctx().insert_or_assign<IPhysicsBackend*>(backend_.get());
+
+    backend_->sync_from_registry(registry);
+    backend_->step(registry, context.fixed_dt());
     stats_cache_ = backend_->stats();
-    // Future hook: dispatch backend contact_events() to interested systems.
 }
 
 }  // namespace evolution::sim

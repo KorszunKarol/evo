@@ -127,6 +127,54 @@ table TraitsCache {
   trait_latent: [float];
 }
 
+/// Sensory system parameters determining perception capabilities.
+table SensoryTraits {
+  /// Maximum vision distance in meters.
+  vision_range: float = 10.0;
+  /// Field of view in radians (1.57 = 90 degrees).
+  vision_fov: float = 1.57;
+  /// Number of vision rays (3-16).
+  vision_rays: uint8 = 5;
+  /// Chemical sensing range in meters (smell food/predators).
+  chemical_range: float = 5.0;
+}
+
+/// Locomotion parameters affecting movement capabilities and costs.
+table LocomotionTraits {
+  /// Muscle strength multiplier (affects force and energy cost).
+  muscle_strength: float = 1.0;
+  /// Turn agility multiplier (affects rotation speed).
+  turn_agility: float = 1.0;
+  /// Jump power multiplier.
+  jump_power: float = 1.0;
+  /// Sprint speed multiplier (uses more energy).
+  sprint_multiplier: float = 1.0;
+}
+
+/// Metabolic parameters affecting energy economy.
+table MetabolismTraits {
+  /// Basal metabolic rate multiplier.
+  basal_modifier: float = 1.0;
+  /// Digestion efficiency (energy extracted from food).
+  digestion_efficiency: float = 1.0;
+  /// Energy storage capacity multiplier.
+  energy_capacity_scale: float = 1.0;
+  /// Starvation tolerance (survives longer at zero energy).
+  starvation_tolerance: float = 1.0;
+}
+
+/// Behavioral bias genes affecting decision tendencies.
+table BehaviorBias {
+  /// Aggression tendency (-1 = flee, +1 = attack).
+  aggression: float = 0.0;
+  /// Exploration tendency (-1 = stay put, +1 = wander).
+  exploration: float = 0.0;
+  /// Sociality tendency (-1 = solitary, +1 = group).
+  sociality: float = 0.0;
+  /// Fear response strength (0 = bold, 1 = cautious).
+  fear: float = 0.5;
+}
+
 table Genome {
   version: uint16;
   id: uint64;
@@ -153,6 +201,15 @@ table Genome {
   attack_power: float = 8.0;
   /// Movement speed multiplier (1.0 = baseline).
   speed_trait: float = 1.0;
+  
+  /// Sensory system traits (vision, smell).
+  sensory: SensoryTraits;
+  /// Locomotion traits (muscles, agility).
+  locomotion: LocomotionTraits;
+  /// Metabolic traits (energy economy).
+  metabolism: MetabolismTraits;
+  /// Behavioral bias genes.
+  behavior: BehaviorBias;
 }
 
 root_type Genome;

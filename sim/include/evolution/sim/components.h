@@ -309,6 +309,29 @@ struct FitnessComponent {
 struct GenomeHandleComponent {
     /// @brief Unique identifier referencing genome storage.
     std::uint64_t id{0};
+    /// @brief ID of the primary parent (for lineage tracking).
+    std::uint64_t parent_id{0};
+    /// @brief Generation number in the lineage.
+    std::uint32_t generation{0};
+};
+
+///
+/// @brief Transient component used to request a snapshot of the brain's internal state.
+///
+/// @note When attached, the BrainInferenceSystem will populate the logic buffers
+///       and the TelemetrySystem will log them to disk.
+///
+struct BrainInspectComponent {
+    /// @brief Snapshot of neural sensors/inputs.
+    std::vector<double> input_snapshot{};
+    /// @brief Snapshot of neural actuators/outputs.
+    std::vector<double> output_snapshot{};
+    /// @brief Internal hidden layer activations (for manifold analysis).
+    std::vector<double> internal_state{};
+    /// @brief Gating network activations (module weights).
+    std::vector<double> gating_snapshot{};
+    /// @brief Bitfield encoding current actions: bit0=eat, bit1=jump, bit2=attack.
+    std::uint8_t action_mask{0};
 };
 
 ///
@@ -343,6 +366,21 @@ struct ActuationComponent {
     bool attack{false};
     /// @brief Brain-controlled throttle for skipping updates (frames).
     int update_skip{0};
+};
+
+/**
+ * @brief Per-entity locomotion traits read from genome.
+ * Stored separately so motor system can apply varied movement parameters.
+ */
+struct LocomotionComponent {
+    /// @brief Muscle strength multiplier (affects force output and energy cost).
+    double muscle_strength{1.0};
+    /// @brief Turn agility multiplier (affects rotation speed).
+    double turn_agility{1.0};
+    /// @brief Jump power multiplier.
+    double jump_power{1.0};
+    /// @brief Sprint speed multiplier (uses more energy).
+    double sprint_multiplier{1.0};
 };
 
 /**
@@ -455,6 +493,54 @@ struct DietComponent {
 };
 
 /**
+ * @brief Defines a persistent territory anchor for a creature.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Center is initialized once, then remains fixed for this iteration.
+ * @warning Initialize deterministically to avoid nondeterministic behavior.
+ * @threadsafe @notthreadsafe.
+ */
+struct TerritoryComponent {
+    /// @brief Center point of the territory (world coordinates).
+    Vec3 center{0.0, 0.0, 0.0};
+    /// @brief Radius within which intruders are considered (meters).
+    double radius{0.0};
+    /// @brief Indicates whether the territory has been initialized.
+    bool initialized{false};
+};
+
+/**
+ * @brief Aggregated social signals computed per tick.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1) access; computed externally.
+ * @note Written by SocialBehaviorSystem before brain inference.
+ * @warning Consumers must treat these as normalized inputs.
+ * @threadsafe @notthreadsafe.
+ */
+struct SocialSignalsComponent {
+    /// @brief Direction toward neighbor centroid (XZ plane, normalized).
+    Vec3 cohesion_dir{0.0, 0.0, 0.0};
+    /// @brief Direction of average neighbor velocity (XZ plane, normalized).
+    Vec3 alignment_dir{0.0, 0.0, 0.0};
+    /// @brief Direction away from nearby neighbors (XZ plane, normalized).
+    Vec3 separation_dir{0.0, 0.0, 0.0};
+    /// @brief Normalized local neighbor density in [0, 1].
+    double neighbor_density{0.0};
+    /// @brief Normalized distance to territory center in [0, 1].
+    double territory_dist_norm{0.0};
+    /// @brief Normalized intruder density in [0, 1].
+    double intruder_density{0.0};
+    /// @brief Direction toward chosen prey (XZ plane, normalized).
+    Vec3 prey_dir{0.0, 0.0, 0.0};
+    /// @brief Normalized ally density near prey in [0, 1].
+    double pack_density_near_prey{0.0};
+};
+
+/**
  * @brief Raycast-based spatial sensing component for agent vision.
  * @param None.
  * @return None.
@@ -489,6 +575,28 @@ enum class DeathCause : std::uint8_t {
     Starvation = 1, ///< Energy depleted via metabolism.
     Predation = 2,  ///< Energy drained to zero by a carnivore.
     OldAge = 3      ///< Future: lifespan limit reached.
+};
+
+/**
+ * @brief Represents a dead entity that remains in the world as a resource.
+ * 
+ * When an entity dies, it may become a corpse instead of being destroyed.
+ * Corpses contain biomass that can be consumed by scavengers and eventually
+ * decays into soil nutrients.
+ */
+struct CorpseComponent {
+    /// @brief Remaining energy/mass available for consumption.
+    double biomass{50.0};
+    /// @brief Maximum biomass this corpse had at death.
+    double max_biomass{50.0};
+    /// @brief Rate at which biomass decays into soil nutrients (units per second).
+    double decay_rate{0.2};
+    /// @brief Accumulation of toxicity/rot (0.0=fresh, 1.0=completely rotten).
+    double toxicity{0.0};
+    /// @brief How long this corpse has existed (seconds).
+    double age{0.0};
+    /// @brief Whether the corpse is still edible.
+    bool edible{true};
 };
 
 /**

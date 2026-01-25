@@ -295,7 +295,7 @@ void PlantSpatialIndex::rebuild(entt::registry& registry) {
         insert(entity, transform.position);
         ++count;
     }
-    spdlog::info("PlantSpatialIndex: Rebuilt with {} plants. Grid size: {}", count, grid_.size());
+    // spdlog::info("PlantSpatialIndex: Rebuilt with {} plants. Grid size: {}", count, grid_.size());
 }
 
 void PlantSpatialIndex::insert(entt::entity entity, const Vec3& position) {
@@ -788,6 +788,8 @@ PlantSpeciesRegistry::PlantSpeciesRegistry() {
         .shoreline_distance_min = 0.0,
         .shoreline_distance_max = 8.0
     };
+
+    active_count_ = 5;
 }
 
 const PlantSpecies& PlantSpeciesRegistry::get(std::uint8_t id) const noexcept {

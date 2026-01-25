@@ -111,17 +111,17 @@ BrainInferenceSystem::BrainInferenceSystem(genetics::GenomeStorage& storage) noe
       gating_buffer_{},
       context_buffer_{},
       module_buffer_{},
-      output_buffer_{},
-      max_input_capacity_{256},
-      max_module_capacity_{64},
-      max_context_capacity_{128},
-      max_module_output_capacity_{256} {
+      output_buffer_{} {
+    constexpr std::size_t kMaxInputCapacity = 256;
+    constexpr std::size_t kMaxModuleCapacity = 64;
+    constexpr std::size_t kMaxContextCapacity = 128;
+    constexpr std::size_t kMaxModuleOutputCapacity = 256;
     // Reserve capacity upfront to reduce per-entity allocations in tick loop
-    input_buffer_.reserve(max_input_capacity_);
-    gating_buffer_.reserve(max_module_capacity_);
-    context_buffer_.reserve(max_context_capacity_);
-    module_buffer_.reserve(max_module_output_capacity_);
-    output_buffer_.reserve(max_module_output_capacity_);
+    input_buffer_.reserve(kMaxInputCapacity);
+    gating_buffer_.reserve(kMaxModuleCapacity);
+    context_buffer_.reserve(kMaxContextCapacity);
+    module_buffer_.reserve(kMaxModuleOutputCapacity);
+    output_buffer_.reserve(kMaxModuleOutputCapacity);
 }
 
 void BrainInferenceSystem::tick(SimulationContext& context) {
@@ -216,11 +216,9 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         };
 
         const std::size_t sensor_count = static_cast<std::size_t>(brain.input_count);
+        input_buffer_.resize(sensor_count);
         // Zero out only the portion that's actually used (reserve capacity is fixed, so zero unused indices)
-        std::fill(input_buffer_.begin(), input_buffer_.begin() + sensor_count, input_buffer_.capacity());
-        if (sensor_count < input_buffer_.capacity()) {
-            std::fill(input_buffer_.begin() + sensor_count, input_buffer_.end(), 0.0);
-        }
+        std::fill(input_buffer_.begin(), input_buffer_.end(), 0.0);
         if (!input_buffer_.empty()) {
             input_buffer_[0] = context_features[0];
         }

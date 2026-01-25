@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "genome_generated.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -76,6 +77,14 @@ void ReproductionSystem::tick(SimulationContext& context) {
                         auto& child_repro = registry.get<ReproductionComponent>(child_entity);
                         child_repro.timer = child_repro.cooldown;
 
+                        // Log spawn event to telemetry
+                        if (telemetry_ != nullptr) {
+                            auto child_pos = child_transform.position;
+                            telemetry_->log_spawn(context.simulation_time(), child_id, handle_a.id,
+                                                  static_cast<float>(child_pos.x),
+                                                  static_cast<float>(child_pos.z));
+                        }
+
                         auto& parent_metabolism = view.get<MetabolismComponent>(parent_a);
                         parent_metabolism.energy -= repro_a.energy_threshold * 0.5;
                         repro_a.timer = repro_a.cooldown;
@@ -96,7 +105,7 @@ void ReproductionSystem::tick(SimulationContext& context) {
 
         for (const auto& candidate : candidates) {
             if (candidate.acceptance_prob > 0.1 && rng.next_unit() < candidate.acceptance_prob) {
-                if (AttemptReproduction(registry, parent_a, candidate.entity, rng.next_u64())) {
+                if (AttemptReproduction(context.simulation_time(), registry, parent_a, candidate.entity, rng.next_u64())) {
                     break;  // Successfully reproduced
                 }
             }
@@ -221,6 +230,7 @@ double ReproductionSystem::EvaluatePreference(
 }
 
 bool ReproductionSystem::AttemptReproduction(
+    double sim_time,
     entt::registry& registry,
     entt::entity parent_a,
     entt::entity parent_b,
@@ -294,6 +304,13 @@ bool ReproductionSystem::AttemptReproduction(
     }
     if (auto* fitness_b = registry.try_get<FitnessComponent>(parent_b)) {
         fitness_b->offspring_count++;
+    }
+
+    // Log spawn event to telemetry
+    if (telemetry_ != nullptr) {
+        telemetry_->log_spawn(sim_time, child_id, handle_a.id,
+                              static_cast<float>(child_transform.position.x),
+                              static_cast<float>(child_transform.position.z));
     }
 
     return true;

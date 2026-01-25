@@ -71,6 +71,8 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `CarnivoreTag`: Carnivore marker
    - `DietComponent`: Diet type (Herbivore/Carnivore/Omnivore)
    - `CombatComponent`: Attack cooldowns and pursuit state
+   - `TerritoryComponent`: Persistent territory center and radius
+   - `SocialSignalsComponent`: Aggregated social cues for brain input
    - `BrainComponent`: Neural controller metadata
    - `ActuationComponent`: Brain output commands (impulse, jump, eat, attack)
    - `ReproductionComponent`: Reproduction cooldown and policy
@@ -187,6 +189,15 @@ The environment module provides a living world with terrain, soil nutrients, pla
 - Herbivores consume nearby plants
 - Energy transferred from `PlantComponent` to `MetabolismComponent`
 - Spatial queries via `PlantSpatialIndex` for efficiency
+
+**Decomposition**:
+- `DecompositionSystem` converts `CorpseComponent.biomass` into soil nutrients each tick
+- Per-tick totals captured in `DecompositionStatistics` (registry context)
+
+**Social Behaviors (Brain-Driven)**:
+- `CreatureSpatialIndexSystem` rebuilds the creature neighbor index each tick
+- `SocialBehaviorSystem` computes flocking, territorial, and pack-hunt signals
+- Social signals are appended to brain inputs (after vision)
 
 **Predator-Prey System**:
 - Carnivores require brain-controlled attack intent (`ActuationComponent.attack`)
@@ -325,4 +336,3 @@ sim/
 - [Module Documentation](./modules/) - Detailed module specs
 - [API Reference](./api/) - Complete API documentation
 - [Data Contracts](./data-contracts/) - Inter-module data flow
-

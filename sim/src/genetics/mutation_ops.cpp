@@ -79,9 +79,10 @@ evolution::genome::NodeType GetNodeType(const evolution::genome::NEATT& neat,
 }  // namespace
 
 MutationResult mutate_add_node(evolution::genome::NEATT& neat,
-                                InnovationDatabase& innovations,
-                                Pcg32& rng) noexcept {
+                                 InnovationDatabase& innovations,
+                                 Pcg32& rng) noexcept {
     std::vector<std::size_t> enabled_indices;
+    enabled_indices.reserve(neat.conns.size());
     for (std::size_t i = 0; i < neat.conns.size(); ++i) {
         if (neat.conns[i] && neat.conns[i]->enabled) {
             enabled_indices.push_back(i);
@@ -198,12 +199,13 @@ MutationResult mutate_add_connection(evolution::genome::NEATT& neat,
 }
 
 MutationResult mutate_delete_connection(evolution::genome::NEATT& neat,
-                                         Pcg32& rng) noexcept {
+                                          Pcg32& rng) noexcept {
     if (neat.conns.empty()) {
         return {false, "No connections to delete"};
     }
-    
+
     std::vector<std::size_t> enabled_indices;
+    enabled_indices.reserve(neat.conns.size());
     for (std::size_t i = 0; i < neat.conns.size(); ++i) {
         if (neat.conns[i] && neat.conns[i]->enabled) {
             enabled_indices.push_back(i);

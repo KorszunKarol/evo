@@ -25,7 +25,10 @@ struct TelemetryEvent {
     double simulation_time{0.0};
     std::uint64_t entity_id{0};
     std::uint64_t target_id{0};
+    std::uint64_t parent_id{0};
     double value{0.0};
+    float x{0.0f};
+    float z{0.0f};
     std::uint8_t cause{0};
 };
 
@@ -69,6 +72,17 @@ struct TelemetryAggregates {
     std::size_t death_count_starvation{0};
     std::size_t death_count_predation{0};
     double total_energy_transferred{0.0};
+    
+    // Phase 4: Biomass / Conservation of Mass
+    std::size_t corpse_count{0};
+    double total_biomass_producers{0.0}; // Plants
+    double total_biomass_consumers{0.0}; // Agents
+    double total_biomass_corpses{0.0};   // Dead
+    double total_biomass_soil{0.0};      // Soil
+    
+    // Phase 4: Behavior Profiling
+    double energy_from_hunting{0.0};
+    double energy_from_scavenging{0.0};
 };
 
 /**
@@ -86,9 +100,11 @@ public:
     void tick(SimulationContext& context) override;
     [[nodiscard]] std::string_view name() const noexcept override { return "telemetry"; }
 
-    void log_death(double sim_time, std::uint64_t entity_id, std::uint8_t cause, double lifetime);
-    void log_feeding(double sim_time, std::uint64_t predator_id, std::uint64_t prey_id, double energy);
-    void log_spawn(double sim_time, std::uint64_t entity_id);
+    void log_death(double sim_time, std::uint64_t entity_id, std::uint8_t cause, double lifetime, float x, float z);
+    void log_feeding(double sim_time, std::uint64_t predator_id, std::uint64_t prey_id, double energy, float x, float z);
+    void log_spawn(double sim_time, std::uint64_t entity_id, std::uint64_t parent_id, float x, float z);
+    void log_neural_state(double sim_time, std::uint64_t entity_id, std::uint8_t action_mask,
+                          const std::vector<double>& internal_state);
 
     [[nodiscard]] const TelemetryAggregates& aggregates() const noexcept { return aggregates_; }
 
@@ -105,6 +121,8 @@ private:
 
     std::ofstream metrics_stream_;
     std::ofstream events_stream_;
+    std::ofstream brain_stream_;
+    std::ofstream neural_stream_;
 };
 
 }  // namespace evolution::sim

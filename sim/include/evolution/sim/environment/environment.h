@@ -176,7 +176,10 @@ private:
 /// @brief Aggregated statistics from the feeding system exported for telemetry.
 ///
 struct FeedingStatistics {
-    double energy_transferred_last_tick{0.0}; ///< Total herbivore energy gained during the last update step.
+    double energy_from_plants{0.0};     ///< Energy gained by herbivores eating plants.
+    double energy_from_scavenging{0.0}; ///< Energy gained by carnivores eating corpses.
+    double energy_from_hunting{0.0};    ///< Energy gained by carnivores eating live prey.
+    double energy_transferred_last_tick{0.0}; // Legacy/Total
 };
 
 ///
@@ -315,12 +318,13 @@ struct PlantSpecies {
 class PlantSpeciesRegistry {
 public:
     PlantSpeciesRegistry();
-    
+
     [[nodiscard]] const PlantSpecies& get(std::uint8_t id) const noexcept;
-    [[nodiscard]] std::size_t count() const noexcept { return species_.size(); }
+    [[nodiscard]] std::size_t count() const noexcept { return active_count_; }
 
 private:
     std::array<PlantSpecies, 8> species_; // Max 8 species for now
+    std::size_t active_count_{0};
 };
 
 ///
@@ -373,8 +377,8 @@ void evolution::sim::PlantSpatialIndex::for_each_in_radius(entt::registry& regis
     const int min_iz = static_cast<int>(std::floor(position.z * inv_cell_size_ - radius * inv_cell_size_));
     const int max_iz = static_cast<int>(std::floor(position.z * inv_cell_size_ + radius * inv_cell_size_));
 
-    std::cout << "DEBUG: Searching " << position.x << "," << position.z << " r=" << radius 
-              << " range=[" << min_ix << "," << max_ix << "]x[" << min_iz << "," << max_iz << "]" << std::endl;
+    // std::cout << "DEBUG: Searching " << position.x << "," << position.z << " r=" << radius 
+    //           << " range=[" << min_ix << "," << max_ix << "]x[" << min_iz << "," << max_iz << "]" << std::endl;
 
     for (int iz = min_iz; iz <= max_iz; ++iz) {
         for (int ix = min_ix; ix <= max_ix; ++ix) {
@@ -384,7 +388,7 @@ void evolution::sim::PlantSpatialIndex::for_each_in_radius(entt::registry& regis
                 continue;
             }
 
-            std::cout << "DEBUG: Found cell " << ix << "," << iz << " count=" << it->second.size() << std::endl;
+            // std::cout << "DEBUG: Found cell " << ix << "," << iz << " count=" << it->second.size() << std::endl;
 
             for (const entt::entity entity : it->second) {
                 if (!registry.valid(entity)) {
