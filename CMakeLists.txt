@@ -182,6 +182,7 @@ add_library(sim_core
     sim/src/brain_inference_system.cpp
     sim/src/motor_system.cpp
     sim/src/stats_system.cpp
+    sim/src/telemetry/telemetry_system.cpp
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
@@ -263,7 +264,9 @@ add_executable(sim_tests
     tests/sim/test_plant_species_mapping.cpp
     tests/sim/test_reproduction_determinism.cpp
     tests/sim/test_integration_system_ordering.cpp
+    tests/sim/test_telemetry.cpp
     tests/sim/test_performance_cadence.cpp
+    tests/sim/test_scenarios.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE
@@ -293,4 +296,3 @@ gtest_discover_tests(sim_tests)
 #
 # Run all tests:
 #   ctest --test-dir build --output-on-failure
-
