@@ -267,6 +267,7 @@ add_executable(sim_tests
     tests/sim/test_telemetry.cpp
     tests/sim/test_performance_cadence.cpp
     tests/sim/test_scenarios.cpp
+    tests/sim/test_integration_invariants.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE
