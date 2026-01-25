@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cmath>
 #include <compare>
 #include <cstdint>
@@ -81,33 +82,33 @@ public:
         return from_raw(static_cast<RawType>(result >> FractionalBits));
     }
 
-    constexpr Fixed64 operator/(const Fixed64& rhs) const {
+    Fixed64 operator/(const Fixed64& rhs) const {
         if (rhs.value_ == 0) {
-             // In simulation, we might want to handle this gracefully or trap.
-             // For now, return max or zero? Let's let it trap/be undefined for speed or return 0 check.
-             // To be safe/robust:
-             return from_raw(0); 
+            // Divide-by-zero is undefined behavior; trap with assert in debug builds.
+            // Production builds may return 0, but this is a bug in calling code.
+            assert(rhs.value_ != 0 && "Fixed64::operator/ division by zero");
+            return from_raw(0);
         }
         __int128 numerator = static_cast<__int128>(value_) << FractionalBits;
         return from_raw(static_cast<RawType>(numerator / rhs.value_));
     }
 
-    constexpr Fixed64& operator+=(const Fixed64& rhs) {
+    Fixed64 operator+=(const Fixed64& rhs) {
         value_ += rhs.value_;
         return *this;
     }
 
-    constexpr Fixed64& operator-=(const Fixed64& rhs) {
+    Fixed64 operator-=(const Fixed64& rhs) {
         value_ -= rhs.value_;
         return *this;
     }
 
-    constexpr Fixed64& operator*=(const Fixed64& rhs) {
+    Fixed64 operator*=(const Fixed64& rhs) {
         *this = *this * rhs;
         return *this;
     }
 
-    constexpr Fixed64& operator/=(const Fixed64& rhs) {
+    Fixed64 operator/=(const Fixed64& rhs) {
         *this = *this / rhs;
         return *this;
     }

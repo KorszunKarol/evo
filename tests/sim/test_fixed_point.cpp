@@ -53,14 +53,28 @@ TEST(FixedPointTest, Precision) {
     EXPECT_NEAR(c.to_double(), 0.3, 1e-9);
 }
 
-TEST(FixedPointTest, Comparison) {
-    Fixed64 a(1.0);
-    Fixed64 b(2.0);
-    
-    EXPECT_TRUE(a < b);
-    EXPECT_TRUE(b > a);
-    EXPECT_TRUE(a <= a);
-    EXPECT_TRUE(a == a);
-    EXPECT_TRUE(a != b);
-}
+    TEST(FixedPointTest, Comparison) {
+        Fixed64 a(1.0);
+        Fixed64 b(2.0);
+
+        EXPECT_TRUE(a < b);
+        EXPECT_TRUE(b > a);
+        EXPECT_TRUE(a <= a);
+        EXPECT_TRUE(a == a);
+        EXPECT_TRUE(a != b);
+    }
+
+    TEST(FixedPointTest, DivideByZero) {
+        Fixed64 a(1.0);
+        Fixed64 zero(0.0);
+
+        // Division by zero returns 0 (documented undefined behavior)
+        Fixed64 result = a / zero;
+        EXPECT_DOUBLE_EQ(result.to_double(), 0.0);
+
+        // Verify division still works correctly in general
+        Fixed64 b(2.0);
+        Fixed64 result2 = a / b;
+        EXPECT_DOUBLE_EQ(result2.to_double(), 0.5);
+    }
 
