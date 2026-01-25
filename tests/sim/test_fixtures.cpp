@@ -1,6 +1,7 @@
 #include "test_fixtures.h"
 
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <unordered_set>
 
@@ -201,11 +202,19 @@ EnvironmentConfig create_test_env_config(std::uint32_t seed) {
     return config;
 }
 
+// Snapshot comparison utilities (compare_snapshots, assert_snapshot_matches)
+// TODO: Implement after resolving macro compilation issue with Snapshot macro collision
+
 std::string hash_entity_state(entt::registry& registry) {
     std::ostringstream oss;
 
+    // Hash system context (timing state)
+    if (const auto* ctx = registry.ctx().find<SimulationContext>()) {
+        oss << "CTX:" << ctx->fixed_dt() << ":" << ctx->simulation_time() << ";";
+    }
+
     // Hash entity count
-    oss << registry.storage<entt::entity>().in_use() << ";";
+    oss << "ENTITY_COUNT:" << registry.storage<entt::entity>().in_use() << ";";
 
     // Hash plant states
     auto plant_view = registry.view<TransformComponent, PlantComponent>();
@@ -219,6 +228,7 @@ std::string hash_entity_state(entt::registry& registry) {
         }
     }
     std::sort(plants.begin(), plants.end());
+    oss << "PLANT:";
     for (const auto& [entity, val] : plants) {
         oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
     }
@@ -235,7 +245,103 @@ std::string hash_entity_state(entt::registry& registry) {
                                     transform.position.x * 0.1);
     }
     std::sort(herbivores.begin(), herbivores.end());
+    oss << "HERBIVORE:";
     for (const auto& [entity, val] : herbivores) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash kinematics (physics state)
+    auto kinematics_view = registry.view<KinematicsComponent>();
+    std::vector<std::pair<entt::entity, double>> kinematics;
+    for (auto entity : kinematics_view) {
+        const auto& kin = kinematics_view.get<KinematicsComponent>(entity);
+        kinematics.emplace_back(entity,
+                              kin.linear_velocity.x * 0.1 + kin.linear_velocity.z * 0.05 +
+                              kin.accumulated_force.x * 0.01 + kin.accumulated_force.z * 0.005);
+    }
+    std::sort(kinematics.begin(), kinematics.end());
+    oss << "KINEMATICS:";
+    for (const auto& [entity, val] : kinematics) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash fitness (accumulated metrics)
+    auto fitness_view = registry.view<FitnessComponent>();
+    std::vector<std::pair<entt::entity, double>> fitness;
+    for (auto entity : fitness_view) {
+        const auto& fit = fitness_view.get<FitnessComponent>(entity);
+        fitness.emplace_back(entity,
+                              fit.age_seconds * 0.1 + fit.energy_int_accum * 0.001 +
+                              static_cast<double>(fit.offspring_count) * 10.0);
+    }
+    std::sort(fitness.begin(), fitness.end());
+    oss << "FITNESS:";
+    for (const auto& [entity, val] : fitness) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash actuation (brain/motor decisions)
+    auto actuation_view = registry.view<ActuationComponent>();
+    std::vector<std::pair<entt::entity, double>> actuations;
+    for (auto entity : actuation_view) {
+        const auto& act = actuation_view.get<ActuationComponent>(entity);
+        actuations.emplace_back(entity,
+                               act.impulse_x * 0.1 + act.impulse_z * 0.05 +
+                               static_cast<double>(act.jump) * 100.0 +
+                               static_cast<double>(act.eat) * 50.0 +
+                               static_cast<double>(act.update_skip) * 10.0);
+    }
+    std::sort(actuations.begin(), actuations.end());
+    oss << "ACTUATION:";
+    for (const auto& [entity, val] : actuations) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash lifecycle (stage state)
+    auto lifecycle_view = registry.view<LifecycleComponent>();
+    std::vector<std::pair<entt::entity, double>> lifecycles;
+    for (auto entity : lifecycle_view) {
+        const auto& lc = lifecycle_view.get<LifecycleComponent>(entity);
+        lifecycles.emplace_back(entity,
+                                lc.age * 0.1 + lc.base_max_energy * 0.01 +
+                                lc.energy_scale * 10.0 + lc.size_scale * 100.0 +
+                                static_cast<double>(lc.stage_index) * 1000.0 +
+                                static_cast<double>(lc.reproduction_allowed) * 10000.0);
+    }
+    std::sort(lifecycles.begin(), lifecycles.end());
+    oss << "LIFECYCLE:";
+    for (const auto& [entity, val] : lifecycles) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash reproduction (cooldown state)
+    auto repro_view = registry.view<ReproductionComponent>();
+    std::vector<std::pair<entt::entity, double>> repros;
+    for (auto entity : repro_view) {
+        const auto& repro = repro_view.get<ReproductionComponent>(entity);
+        repros.emplace_back(entity,
+                               repro.cooldown * 10.0 + repro.timer * 5.0 +
+                               repro.mate_radius * 1.0 + repro.energy_threshold * 0.01);
+    }
+    std::sort(repros.begin(), repros.end());
+    oss << "REPRODUCTION:";
+    for (const auto& [entity, val] : repros) {
+        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
+    }
+
+    // Hash brain (neural controller state)
+    auto brain_view = registry.view<BrainComponent>();
+    std::vector<std::pair<entt::entity, double>> brains;
+    for (auto entity : brain_view) {
+        const auto& brain = brain_view.get<BrainComponent>(entity);
+        brains.emplace_back(entity,
+                              static_cast<double>(brain.input_count) * 0.1 +
+                              static_cast<double>(brain.output_count) * 0.05 +
+                              brain.update_interval * 10.0 + brain.accumulator * 100.0);
+    }
+    std::sort(brains.begin(), brains.end());
+    oss << "BRAIN:";
+    for (const auto& [entity, val] : brains) {
         oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
     }
 
