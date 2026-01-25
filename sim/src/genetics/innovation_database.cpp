@@ -50,20 +50,23 @@ bool InnovationDatabase::save(const std::filesystem::path& path) const noexcept 
         return false;
     }
 
-    const std::uint32_t version = 1;
-    file.write(reinterpret_cast<const char*>(&version), sizeof(version));
-    file.write(reinterpret_cast<const char*>(&next_node_id_), sizeof(next_node_id_));
-    file.write(reinterpret_cast<const char*>(&next_innovation_id_), sizeof(next_innovation_id_));
-
+    // Binary format: [MAGIC][VERSION][COUNT][ENTRIES][DATA...]
+    // Magic bytes for validation
+    constexpr std::uint32_t kMagic = 0x49564E56UL;
+    constexpr std::uint32_t kVersion = 1;
+    
+    file.write(reinterpret_cast<const char*>(&kMagic), sizeof(kMagic));
+    file.write(reinterpret_cast<const char*>(&kVersion), sizeof(kVersion));
+    
     const std::uint32_t count = static_cast<std::uint32_t>(connection_innovations_.size());
     file.write(reinterpret_cast<const char*>(&count), sizeof(count));
-
+    
     for (const auto& [key, innovation] : connection_innovations_) {
         file.write(reinterpret_cast<const char*>(&key.first), sizeof(key.first));
         file.write(reinterpret_cast<const char*>(&key.second), sizeof(key.second));
         file.write(reinterpret_cast<const char*>(&innovation), sizeof(innovation));
     }
-
+    
     return file.good();
 }
 
