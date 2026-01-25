@@ -239,6 +239,130 @@ evolution::genome::GenomeT mutate(evolution::genome::GenomeT genome,
             15.0));
     }
 
+    // ========================================================================
+    // Sensory Trait Mutations (Vision, Chemical Sensing)
+    // ========================================================================
+    if (!genome.sensory) {
+        genome.sensory = std::make_unique<evolution::genome::SensoryTraitsT>();
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 3.0);
+        genome.sensory->vision_range = static_cast<float>(std::clamp(
+            static_cast<double>(genome.sensory->vision_range) + delta,
+            5.0, 50.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.3);
+        genome.sensory->vision_fov = static_cast<float>(std::clamp(
+            static_cast<double>(genome.sensory->vision_fov) + delta,
+            0.5, 6.28));  // 30 deg to 360 deg
+    }
+    if (rng.next_unit() < mutate_rate_param * 0.3) {
+        const int delta = rng.next_unit() < 0.5 ? -1 : 1;
+        genome.sensory->vision_rays = static_cast<std::uint8_t>(std::clamp(
+            static_cast<int>(genome.sensory->vision_rays) + delta,
+            3, 16));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 2.0);
+        genome.sensory->chemical_range = static_cast<float>(std::clamp(
+            static_cast<double>(genome.sensory->chemical_range) + delta,
+            0.0, 20.0));
+    }
+
+    // ========================================================================
+    // Locomotion Trait Mutations (Muscles, Agility, Jump, Sprint)
+    // ========================================================================
+    if (!genome.locomotion) {
+        genome.locomotion = std::make_unique<evolution::genome::LocomotionTraitsT>();
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.locomotion->muscle_strength = static_cast<float>(std::clamp(
+            static_cast<double>(genome.locomotion->muscle_strength) + delta,
+            0.5, 3.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.locomotion->turn_agility = static_cast<float>(std::clamp(
+            static_cast<double>(genome.locomotion->turn_agility) + delta,
+            0.5, 2.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.locomotion->jump_power = static_cast<float>(std::clamp(
+            static_cast<double>(genome.locomotion->jump_power) + delta,
+            0.0, 2.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.15);
+        genome.locomotion->sprint_multiplier = static_cast<float>(std::clamp(
+            static_cast<double>(genome.locomotion->sprint_multiplier) + delta,
+            1.0, 2.0));
+    }
+
+    // ========================================================================
+    // Metabolism Trait Mutations (Energy Economy)
+    // ========================================================================
+    if (!genome.metabolism) {
+        genome.metabolism = std::make_unique<evolution::genome::MetabolismTraitsT>();
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.metabolism->basal_modifier = static_cast<float>(std::clamp(
+            static_cast<double>(genome.metabolism->basal_modifier) + delta,
+            0.5, 2.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.15);
+        genome.metabolism->digestion_efficiency = static_cast<float>(std::clamp(
+            static_cast<double>(genome.metabolism->digestion_efficiency) + delta,
+            0.5, 1.5));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.metabolism->energy_capacity_scale = static_cast<float>(std::clamp(
+            static_cast<double>(genome.metabolism->energy_capacity_scale) + delta,
+            0.5, 2.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.15);
+        genome.metabolism->starvation_tolerance = static_cast<float>(std::clamp(
+            static_cast<double>(genome.metabolism->starvation_tolerance) + delta,
+            0.5, 2.0));
+    }
+
+    // ========================================================================
+    // Behavior Bias Mutations (Neural Tendencies)
+    // ========================================================================
+    if (!genome.behavior) {
+        genome.behavior = std::make_unique<evolution::genome::BehaviorBiasT>();
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.3);
+        genome.behavior->aggression = static_cast<float>(std::clamp(
+            static_cast<double>(genome.behavior->aggression) + delta,
+            -1.0, 1.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.3);
+        genome.behavior->exploration = static_cast<float>(std::clamp(
+            static_cast<double>(genome.behavior->exploration) + delta,
+            -1.0, 1.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.3);
+        genome.behavior->sociality = static_cast<float>(std::clamp(
+            static_cast<double>(genome.behavior->sociality) + delta,
+            -1.0, 1.0));
+    }
+    if (rng.next_unit() < mutate_rate_param) {
+        const double delta = rng.normal(0.0, weight_sigma * 0.2);
+        genome.behavior->fear = static_cast<float>(std::clamp(
+            static_cast<double>(genome.behavior->fear) + delta,
+            0.0, 1.0));
+    }
+
     // MLP mutations
     if (genome.mlp) {
         for (auto& weight : genome.mlp->weights) {
