@@ -120,6 +120,7 @@ table Genome {
   parents: [uint64];
   rng_seed: uint64;
   body: Body;
+  plant_traits: PlantTraits;
   brain_kind: BrainKind;
   mlp: MLP;
   neat: NEAT;
