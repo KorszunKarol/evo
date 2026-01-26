@@ -70,8 +70,11 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `NameComponent`: Debug labeling
    - `PlantComponent`: Plant energy and lifecycle
    - `PlantSeedParams`: Plant reproduction parameters
-   - `FeedingIntent`: Herbivore feeding behavior
+   - `FeedingIntent`: Feeding behavior
+   - `DietComponent`: Herbivore/carnivore routing
    - `HerbivoreTag`: Herbivore marker
+   - `CarnivoreTag`: Carnivore marker
+   - `CombatComponent`: Predator cooldown and targeting metadata
    - `BrainComponent`: Neural controller metadata
    - `ActuationComponent`: Brain output commands
    - `ReproductionComponent`: Reproduction cooldown and policy
@@ -84,12 +87,12 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - **Terrain Integration**: Heightfield collision via `Terrain` service
 
 5. **sim/environment** - Living world systems
-   - `environment/environment.h`: Terrain and soil grid definitions
+   - `environment/environment.h`: Terrain and soil grid/volume definitions
    - `environment/environment_bootstrap.*`: One-time terrain/soil initialization
    - `environment/soil_system.*`: Nutrient diffusion and regeneration
    - `environment/plant_systems.*`: Plant growth, seeding, cleanup
-   - `environment/feeding_system.*`: Energy transfer from plants to herbivores
-   - **Services**: `Terrain` and `SoilGrid` stored in registry context
+   - `environment/feeding_system.*`: Energy transfer from plants or prey
+   - **Services**: `Terrain`, `SoilGrid`, and `SoilVolume` stored in registry context
 
 6. **sim/math** - Mathematical utilities
    - `Vec3`: 3D vector operations
@@ -189,8 +192,9 @@ The environment module provides a living world with terrain, soil nutrients, pla
 
 **Soil**:
 - 2D nutrient grid with diffusion and regeneration
-- Plants sample nutrients for growth
-- Stored as global service in `registry.ctx<SoilGrid>()`
+- 3D soil volume for volumetric nutrient sampling
+- Plants sample nutrients for growth (prefers `SoilVolume` when present)
+- Stored as global services in `registry.ctx<SoilGrid>()` and `registry.ctx<SoilVolume>()`
 
 **Plants**:
 - Grow from soil nutrients
@@ -199,9 +203,10 @@ The environment module provides a living world with terrain, soil nutrients, pla
 - Lifecycle managed by growth, seeding, and cleanup systems
 
 **Feeding**:
-- Herbivores consume nearby plants
-- Energy transferred from `PlantComponent` to `MetabolismComponent`
-- Spatial queries via `PlantSpatialIndex` for efficiency
+- Herbivores consume nearby plants; carnivores consume nearby prey
+- Energy transferred from plants/prey to `MetabolismComponent`
+- Spatial queries via `PlantSpatialIndex` for plant lookups
+- Carnivore attacks gated by `ActuationComponent::attack` and `CombatComponent`
 
 ## Extension Points
 

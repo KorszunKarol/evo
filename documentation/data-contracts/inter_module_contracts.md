@@ -153,6 +153,89 @@ struct MetabolismComponent {
 
 ---
 
+### DietComponent Access
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `type`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: Spawn systems (initialization)
+- **Write Fields**: `type`
+- **Write Frequency**: Once per entity lifetime
+- **Thread Safety**: Not thread-safe
+- **Validation**: Must be `DietType::Herbivore` or `DietType::Carnivore`
+
+**Data Format**:
+```cpp
+struct DietComponent {
+    DietType type;  // Herbivore or Carnivore
+};
+```
+
+**Guarantees**:
+- `type` remains stable after initialization
+
+---
+
+### CombatComponent Access
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `attack_cooldown`, `attack_timer`, `target`, `damage_dealt`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: FeedingSystem
+- **Write Fields**: `attack_timer`, `target`, `damage_dealt`
+- **Write Frequency**: On successful predation or cooldown updates
+- **Thread Safety**: Not thread-safe
+- **Validation**: `attack_timer` must remain in `[0, attack_cooldown]`
+
+**Data Format**:
+```cpp
+struct CombatComponent {
+    double attack_cooldown;
+    double attack_timer;
+    entt::entity target;
+    double damage_dealt;
+};
+```
+
+**Guarantees**:
+- Cooldown timer never negative after update
+
+---
+
+### ActuationComponent Access (Attack Field)
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `attack`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: BrainInferenceSystem
+- **Write Fields**: `attack`
+- **Write Frequency**: Every inference update
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct ActuationComponent {
+    bool attack;  // Attack request for predators
+};
+```
+
+**Guarantees**:
+- Attack intent is interpreted as a per-tick request; systems may clear it after use
+
+---
+
 ### GenomeHandleComponent Access
 
 **Read Contract**:
@@ -494,13 +577,15 @@ struct SpeciesIndexContext {
 ```
 PlantGrowthSystem
     ├─> Read: TransformComponent::position
-    ├─> Read: SoilGrid::sample(x, z) at plant position
+    ├─> Read: SoilVolume::sample(pos) when available
+    ├─> Fallback: SoilGrid::sample(x, z) when SoilVolume is absent
     ├─> Compute: growth = growth_rate * dt * soil_factor
     └─> Write: PlantComponent::energy += growth (clamped to max_energy)
 ```
 
 **Preconditions**:
 - Soil grid exists in `registry.ctx<SoilGrid>()`
+- Soil volume may exist in `registry.ctx<SoilVolume>()`
 - Plant has `TransformComponent` and `PlantComponent`
 
 **Postconditions**:
@@ -511,29 +596,40 @@ PlantGrowthSystem
 
 ### Feeding ↔ Plants ↔ Metabolism Contract
 
-**Contract**: Feeding transfers energy from plants to herbivore metabolism.
+**Contract**: Feeding transfers energy from plants or prey based on diet.
 
 **Data Flow**:
 ```
 FeedingSystem
-    ├─> Query: PlantSpatialIndex for plants near herbivore
-    ├─> For each plant in radius:
-    │   ├─> Check: distance <= reach + plant.radius
-    │   ├─> Read: PlantComponent::energy, FeedingIntent::rate
-    │   ├─> Compute: transfer = min(plant.energy, rate * dt)
-    │   ├─> Write: MetabolismComponent::energy += transfer (clamped)
-    │   └─> Write: PlantComponent::energy -= transfer
-    └─> Mark plant dead if energy <= 0
+    ├─> Read: DietComponent::type
+    ├─> Herbivore path:
+    │   ├─> Query: PlantSpatialIndex for plants near herbivore
+    │   ├─> For each plant in radius:
+    │   │   ├─> Check: distance <= reach + plant.radius
+    │   │   ├─> Read: PlantComponent::energy, FeedingIntent::rate
+    │   │   ├─> Compute: transfer = min(plant.energy, rate * dt)
+    │   │   ├─> Write: MetabolismComponent::energy += transfer (clamped)
+    │   │   └─> Write: PlantComponent::energy -= transfer
+    │   └─> Mark plant dead if energy <= 0
+    ├─> Carnivore path:
+    │   ├─> Gate: ActuationComponent::attack (if present)
+    │   ├─> Check: CombatComponent::attack_timer (cooldown)
+    │   ├─> Scan: prey entities with MetabolismComponent
+    │   ├─> Compute: transfer = min(prey.energy, rate * dt)
+    │   ├─> Write: MetabolismComponent::energy += transfer (predator)
+    │   └─> Write: prey MetabolismComponent::energy -= transfer
+    └─> Update CombatComponent cooldown and target on successful attack
 ```
 
 **Preconditions**:
-- Herbivore has `HerbivoreTag`, `FeedingIntent`, `MetabolismComponent`
+- Feeder has `FeedingIntent`, `MetabolismComponent`, `DietComponent`
 - Plant has `PlantComponent` with `alive == true`
-- `PlantSpatialIndex` rebuilt before feeding queries
+- `PlantSpatialIndex` rebuilt before herbivore feeding queries
+- Carnivores may have `ActuationComponent` and `CombatComponent` for gating
 
 **Postconditions**:
 - Energy never < 0 (clamped)
-- Herbivore energy never > max_energy (clamped)
+- Predator energy never > max_energy (clamped)
 - Plant marked dead if energy depleted
 
 **Energy Conservation**: Energy transferred atomically; no loss during transfer.

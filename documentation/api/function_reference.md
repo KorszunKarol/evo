@@ -1148,6 +1148,110 @@ void regenerate(double dt) noexcept;
 
 ---
 
+## SoilVolume
+
+### Constructor
+
+```cpp
+explicit SoilVolume(const SoilVolumeConfig& config);
+```
+
+**Parameters**:
+- `config`: `SoilVolumeConfig` - Volume configuration
+  - `width`: `int` - Grid width (default: 64)
+  - `height`: `int` - Grid height (default: 16)
+  - `depth`: `int` - Grid depth (default: 64)
+  - `voxel_size`: `double` - World-space voxel size (default: 1.0)
+  - `diffusion_rate`: `float` - Diffusion coefficient (default: 0.1)
+
+**Returns**: `SoilVolume` instance
+
+**Exceptions**: May throw `std::bad_alloc`
+
+**Complexity**: O(W×H×D) for voxel allocation
+
+---
+
+### at()
+
+```cpp
+SoilVoxel& at(int x, int y, int z);
+```
+
+**Parameters**:
+- `x`: `int` - X index in [0, width)
+- `y`: `int` - Y index in [0, height)
+- `z`: `int` - Z index in [0, depth)
+
+**Returns**: `SoilVoxel&` - Mutable voxel reference
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Warning**: No bounds checking; invalid indices are undefined behavior
+
+---
+
+### sample()
+
+```cpp
+SoilVoxel sample(const Vec3& pos) const;
+```
+
+**Parameters**:
+- `pos`: `Vec3` - World-space position in meters
+
+**Returns**: `SoilVoxel` - Trilinearly interpolated voxel values
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Note**: Positions are clamped to volume bounds
+
+---
+
+### diffuse()
+
+```cpp
+void diffuse(double dt);
+```
+
+**Parameters**:
+- `dt`: `double` - Simulation timestep in seconds
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(W×H×D) - 6-neighbor stencil
+
+**Note**: Uses a scratch buffer to avoid read/write conflicts
+
+---
+
+### regenerate()
+
+```cpp
+void regenerate(double dt, const BiomeMap* biome_map, double climate_mult);
+```
+
+**Parameters**:
+- `dt`: `double` - Simulation timestep in seconds
+- `biome_map`: `BiomeMap*` - Optional biome map (nullable)
+- `climate_mult`: `double` - Climate multiplier for regeneration rates
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(W×H×D)
+
+**Note**: Regeneration applies to nitrogen only as a nutrient proxy
+
+---
+
 ## EnvironmentBootstrapSystem
 
 ### Constructor
@@ -1203,15 +1307,18 @@ void tick(SimulationContext& context) override;
 
 **Exceptions**: May propagate exceptions from registry access
 
-**Complexity**: O(H × P_avg) where H = herbivore count, P_avg = average plants in radius
+**Complexity**: O(H × P_avg + C × N) where H = herbivores, C = carnivores, N = prey candidates
 
 **Side Effects**:
-- Transfers energy from plants to herbivores
-- Updates `MetabolismComponent::energy` and `PlantComponent::energy`
+- Transfers energy from plants or prey to feeders based on diet
+- Updates `MetabolismComponent::energy` (predator/prey) and `PlantComponent::energy`
 - Marks plants dead if energy depleted
+- Updates `CombatComponent` cooldown and target after successful predation
 
 **Component Requirements**:
-- Herbivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `HerbivoreTag`
+- Herbivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `DietComponent`
+- Carnivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `DietComponent`, `CombatComponent` (optional for cooldown)
+- Optional: `ActuationComponent` (attack gating for carnivores)
 - Plant: `TransformComponent`, `PlantComponent`
 
 ---
