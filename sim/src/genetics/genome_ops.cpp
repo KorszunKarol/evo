@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <spdlog/spdlog.h>
+
+#include "evolution/genetics/genome_storage.h"
 #include "evolution/genetics/trait_extraction.h"
 
 namespace evolution::genetics {
@@ -618,7 +621,7 @@ double compatibility_distance(const evolution::genome::Genome& a,
     distance += trait_dist * 0.3;
 
     // Plant trait extraction and creation
-    return traits;
+    return distance;
 }
 
 [[nodiscard]] std::unique_ptr<::evolution::genome::PlantTraitsT> ExtractPlantTraits(
@@ -683,6 +686,4 @@ double compatibility_distance(const evolution::genome::Genome& a,
 }
 
 
-namespace {
-
-
+}  // namespace evolution::genetics
