@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <entt/entt.hpp>
+
 #include "evolution/sim/math_types.h"
 
 namespace evolution::sim {
@@ -194,10 +196,80 @@ struct FeedingIntent {
     double rate{6.0};
 };
 
-///
-/// @brief Empty tag component marking herbivorous entities.
-///
+/**
+ * @brief Empty tag component marking herbivorous entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Used for view-based filtering in feeding systems.
+ * @warning Tags must be paired with compatible feeding components.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
 struct HerbivoreTag {};
+
+/**
+ * @brief Empty tag component marking carnivorous entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Enables predator-prey targeting rules in feeding systems.
+ * @warning Ensure carnivores also carry CombatComponent for cooldown tracking.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct CarnivoreTag {};
+
+/**
+ * @brief Enumerates supported diet types for entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Used by FeedingSystem to select plant vs prey sources.
+ * @warning Ensure matching tags/components align with this setting.
+ * @threadsafe @threadsafe Read-only enum.
+ */
+enum class DietType : std::uint8_t {
+    Herbivore = 0, ///< Consumes plants.
+    Carnivore = 1  ///< Consumes other entities.
+};
+
+/**
+ * @brief Defines the feeding behaviour of an entity.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note FeedingSystem reads this to branch herbivore/carnivore logic.
+ * @warning Keep type consistent with any tag components present.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct DietComponent {
+    /// @brief The primary diet type.
+    DietType type{DietType::Herbivore};
+};
+
+/**
+ * @brief Combat state for predator entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Tracks per-entity cooldown and active target selection.
+ * @warning Cooldown timers should be advanced by the feeding system only.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct CombatComponent {
+    /// @brief Duration between attack attempts (seconds).
+    double attack_cooldown{1.0};
+    /// @brief Time remaining before next attack is permitted (seconds).
+    double attack_timer{0.0};
+    /// @brief Current attack target entity handle.
+    entt::entity target{entt::null};
+    /// @brief Total damage dealt during current pursuit.
+    double damage_dealt{0.0};
+};
 
 ///
 /// @brief Tracks the energetic state of an entity.
@@ -272,6 +344,8 @@ struct ActuationComponent {
     bool jump{false};
     /// @brief Request to perform feeding behaviour if available.
     bool eat{false};
+    /// @brief Request to attack nearby prey (carnivores only).
+    bool attack{false};
     /// @brief Brain-controlled throttle for skipping updates (frames).
     int update_skip{0};
 };
