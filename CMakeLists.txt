@@ -186,6 +186,7 @@ add_library(sim_core
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
+    sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
     sim/src/environment/feeding_system.cpp
     sim/src/fitness_update_system.cpp

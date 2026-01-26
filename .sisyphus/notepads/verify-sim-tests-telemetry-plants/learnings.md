@@ -234,3 +234,337 @@ Installed Biome to satisfy JSON diagnostics:
 ```sh
 npm install -g @biomejs/biome
 ```
+
+## Telemetry System Inventory (2026-01-26)
+
+### Source & Header Files
+- `/home/karolito/evolution/sim/src/telemetry/telemetry_system.cpp`: Core implementation of event logging and rollup aggregation.
+- `/home/karolito/evolution/sim/include/evolution/sim/telemetry_system.h`: Class definition, event types, and output filename constants.
+- `/home/karolito/evolution/sim/src/scenario.cpp`: Orchestrates telemetry initialization and registration with the ECS registry context.
+- `/home/karolito/evolution/sim/include/evolution/sim/scenario.h`: Defines `SimulationScenario` configuration struct for telemetry parameters.
+
+### Test Files
+- `/home/karolito/evolution/tests/sim/test_telemetry.cpp`: C++ unit tests for event emission, flushing, and movement metrics.
+- `/home/karolito/evolution/tests/python/test_ingest_smoke.py`: Smoke test for the Python telemetry ingestion pipeline.
+
+### Analysis & Ingestion
+- `/home/karolito/evolution/analysis/telemetry_ingest/ingest.py`: Script to convert JSONL/CSV telemetry into Parquet format.
+- `/home/karolito/evolution/analysis/notebooks/behavior_patterns.ipynb`: Jupyter notebook for behavior analysis.
+- `/home/karolito/evolution/analysis/notebooks/species_dynamics.ipynb`: Jupyter notebook for species trend analysis.
+
+### CMake Wiring
+- `sim_core` target: Includes `sim/src/telemetry/telemetry_system.cpp`.
+- `sim_tests` target: Includes `tests/sim/test_telemetry.cpp`.
+- Include directories: `/home/karolito/evolution/sim/include` is globally available to these targets.
+
+### Output Paths & Constants
+- **Base Directory**: Defaulted to `output/` (configured via `SimulationScenario`).
+- **Telemetry Subdirectory**: `telemetry/` (appended to base directory).
+- **Event Log**: `telemetry/events.jsonl` (Schema version 2).
+- **Global Metrics**: `telemetry/metrics.csv` (Periodic snapshots).
+- **Species Rollups**: `telemetry/species_rollups.csv` (Per-species metrics).
+
+### Key Implementation Details
+- `TelemetrySystem` is an `ISystem` that ticks with the simulation.
+- Uses `TelemetryContext` in EnTT registry context for global access.
+- `TELEMETRY_SCHEMA_VERSION` is currently `2`.
+- Events are buffered and flushed based on `telemetry_buffer_size`.
+- Movement metrics are automatically emitted for entities with `TransformComponent` and `KinematicsComponent` based on sampling rates.
+
+## Telemetry CMake Configuration (2026-01-26)
+
+Inspected `CMakeLists.txt` to confirm telemetry integration across targets.
+
+### Target: sim_core
+- **Source**: `sim/src/telemetry/telemetry_system.cpp` is added to `sim_core` at line 195.
+- **Nature**: Included unconditionally in the library source list.
+
+### Target: sim_app
+- **Linkage**: Links against `sim_core` (PRIVATE) at line 233, providing access to telemetry systems.
+- **Entry Point**: `sim/src/main.cpp` (line 229).
+
+### Target: sim_tests
+- **Source**: `tests/sim/test_telemetry.cpp` is added to `sim_tests` at line 289.
+- **Linkage**: Links against `sim_core` (PRIVATE) at line 298.
+- **Nature**: Included unconditionally in the test suite source list.
+
+### Conditional Options
+- No `option()` or `if()` blocks were found that gate the compilation of telemetry source files or tests.
+- `EVOLUTION_ENABLE_TRACY` (line 116) gates Tracy profiler integration but does not affect the core telemetry module.
+- Runtime control of telemetry is handled via `Scenario` configuration (e.g., `scenario.enable_telemetry`) as seen in `sim/src/scenario.cpp`, but the code itself is always built.
+
+## Telemetry Output Format Reference (2026-01-26)
+
+### Primary Documentation Source
+- **Location**: `documentation/modules/telemetry.md`
+- **Status**: Single source of truth for telemetry schema
+- **Coverage**: Event types, rollup schemas, API reference
+
+### JSONL Event Stream Schema
+
+**File**: `telemetry/events.jsonl`
+
+**Schema Version**: Current = 2 (defined in `telemetry_system.h` as `TELEMETRY_SCHEMA_VERSION`)
+
+**Standard Record Format**:
+```json
+{
+  "schema_version": 2,
+  "run_id": "default",
+  "type": "EVENT_TYPE",
+  "sim_time": 12.34,
+  "payload": { ... }
+}
+```
+
+**Required Keys**:
+- `schema_version` (uint32): Version identifier for schema evolution
+- `run_id` (string): Simulation run identifier (default: "default")
+- `type` (string): Event type enum as string
+- `sim_time` (double): Simulation timestamp in seconds
+- `payload` (object): Event-specific data
+
+**Event Types and Payload Schemas**:
+
+1. **SPECIES_CREATED**
+   ```json
+   {
+     "species_id": 1,
+     "population": 42
+   }
+   ```
+
+2. **SPECIES_EXTINCT**
+   ```json
+   {
+     "species_id": 1,
+     "population": 0
+   }
+   ```
+
+3. **ENTITY_SPAWN**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "parent_a": 100,
+     "asexual": true
+   }
+   ```
+   - Also emitted from `scenario.cpp` with only `entity_id` and `genome_id`
+
+4. **ENTITY_DEATH**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "cause": "STARVATION"  // or "OLD_AGE", "UNKNOWN"
+   }
+   ```
+
+5. **FEEDING_EVENT**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "plant_species": 1,
+     "energy": 50.0
+   }
+   ```
+
+6. **BRAIN_OUTPUT**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "impulse_x": -0.31,
+     "impulse_z": 0.001,
+     "jump": false,
+     "eat": true,
+     "brain_kind": 0,
+     "output_count": 4
+   }
+   ```
+
+7. **ACTUATION_APPLIED**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "impulse_x": 0.0,
+     "impulse_z": 0.0,
+     "jump_requested": false,
+     "jump_applied": false,
+     "force_x": 0.0,
+     "force_y": 0.0,
+     "force_z": 0.0,
+     "energy_cost": 0.0
+   }
+   ```
+
+8. **MOVEMENT_METRIC**
+   ```json
+   {
+     "entity_id": 123,
+     "genome_id": 18176792142709060462,
+     "dx": 0.015,
+     "dy": -0.17,
+     "dz": 0.031,
+     "distance": 0.178,
+     "vx": 0.0,
+     "vy": -0.163,
+     "vz": 0.0
+   }
+   ```
+
+9. **GENOME_TRAITS**
+   ```json
+   {
+     "genome_id": 18176792142709060462,
+     "traits": [0.1, 0.5, 0.9, ...]  // JSON array of trait values
+   }
+   ```
+
+10. **LINEAGE_LINK**
+    ```json
+    {
+      "child_genome_id": 18176792142709060462,
+      "parent_a_genome_id": 1234567890123456789,
+      "asexual": true
+    }
+    ```
+
+11. **ROLLUP_SNAPSHOT**
+    - Internal event type, not user-facing
+
+**JSONL Format Notes**:
+- Each line is a complete JSON object (newline-delimited)
+- No trailing commas between records
+- JSON strings are escaped using `EscapeJsonString()` function
+- Records are appended incrementally via `flush()` calls
+
+### CSV Rollup Schemas
+
+**File 1**: `telemetry/metrics.csv` (Global rollups)
+
+**CSV Headers**:
+```
+schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy
+```
+
+**Data Types**:
+- `schema_version` (uint32): Schema version identifier
+- `run_id` (string): Simulation run identifier (escaped as JSON string)
+- `sim_time` (double): Simulation timestamp in seconds
+- `total_population` (size_t): Total entity count
+- `mean_energy` (double): Average energy across all entities
+- `total_feeding_energy` (double): Energy transferred via feeding in last interval
+
+**Example Row**:
+```
+2,default,0.983333,824,293.113,0
+```
+
+**File 2**: `telemetry/species_rollups.csv` (Per-species rollups)
+
+**CSV Headers**:
+```
+schema_version,run_id,sim_time,species_id,population,mean_energy
+```
+
+**Data Types**:
+- `schema_version` (uint32): Schema version identifier
+- `run_id` (string): Simulation run identifier (escaped as JSON string)
+- `sim_time` (double): Simulation timestamp in seconds
+- `species_id` (uint32): Species identifier
+- `population` (size_t): Entity count for this species
+- `mean_energy` (double): Average energy for this species
+
+**Example Row**:
+```
+2,default,0.983333,1,13,223.307
+```
+
+**CSV Format Notes**:
+- Header written only if file is missing or empty
+- Records appended incrementally
+- One row per species per rollup interval
+- `run_id` values escaped via `EscapeJsonString()` for safety
+
+### Implementation Details
+
+**Source Files**:
+- Header: `sim/include/evolution/sim/telemetry_system.h`
+- Implementation: `sim/src/telemetry/telemetry_system.cpp`
+- Tests: `tests/sim/test_telemetry.cpp`
+
+**Key Implementation Constants**:
+- Schema version: `constexpr std::uint32_t TELEMETRY_SCHEMA_VERSION = 2;`
+- Default rollup interval: `1.0` second (configurable via `RollupConfig`)
+- Default buffer size: `1000` events (configurable via `RollupConfig`)
+
+**Event Emitters** (grep results):
+- `motor_system.cpp`: ACTUATION_APPLIED
+- `scenario.cpp`: ENTITY_SPAWN, GENOME_TRAITS
+- `feeding_system.cpp`: FEEDING_EVENT
+- `metabolism_system.cpp`: ENTITY_DEATH
+- `species_index_system.cpp`: SPECIES_CREATED, SPECIES_EXTINCT
+- `brain_inference_system.cpp`: BRAIN_OUTPUT
+- `reproduction_system.cpp`: ENTITY_SPAWN, LINEAGE_LINK, GENOME_TRAITS
+- `telemetry_system.cpp`: MOVEMENT_METRIC (generated internally)
+
+### External Standards and References
+
+**Downstream Targets** (mentioned in docs):
+- **Parquet**: Cited as target format for offline analytics in `documentation/modules/telemetry.md`
+- **Notebooks**: Mentioned for analysis (no specific tool specified)
+- **Note**: No specific Parquet library (Arrow/DuckDB) currently integrated
+
+**JSONL Format**:
+- Standard newline-delimited JSON format (also known as NDJSON)
+- Each line is a valid JSON object
+- No array wrapper, each record is self-contained
+- Common for streaming logs and event data
+
+**CSV Format**:
+- Comma-separated values with header row
+- Standard RFC 4180 format
+- `run_id` values JSON-escaped for safety (handles quotes, special chars)
+
+### Test Verification
+
+**Test Coverage** (`tests/sim/test_telemetry.cpp`):
+1. `WritesEventsJsonl`: Verifies basic event emission and file creation
+2. `WritesMovementMetrics`: Verifies movement metric generation over ticks
+
+**Verification Approach**:
+- Tests use temporary directories
+- Check for file existence and content presence
+- Validate required fields (`type`, `run_id`) appear in output
+
+**Actual Output Observed** (from `output/telemetry/` run):
+- Events: ACTUATION_APPLIED (29,304), MOVEMENT_METRIC (29,232), BRAIN_OUTPUT (3,118)
+- CSVs: metrics.csv (22 rows), species_rollups.csv (152 rows)
+- No SPECIES/ENTITY lifecycle events in this run (likely filtered or no births/deaths occurred)
+
+
+## CMake configure for telemetry verification (2026-01-26)
+
+- Command: `cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo`
+- Status: Success (Exit Code 0)
+- Observations:
+  - `build/` directory existed and was reused.
+  - Tracy profiler is enabled (`TRACY_ENABLE: ON`).
+  - Doxygen was not found (warning).
+  - Deprecation warnings for GLM and GLAD (CMake < 3.5 compatibility).
+  - Configuration and generation completed in ~10.2s.
+
+## Telemetry files restoration (2026-01-26)
+
+- Files restored from commit `7ac0524c2a8bb06d57957014d07aa45c55316baa`:
+  - `sim/include/evolution/sim/telemetry_system.h`
+  - `sim/src/telemetry/telemetry_system.cpp`
+  - `tests/sim/test_telemetry.cpp`
+  - `documentation/modules/telemetry.md`
+- Restoration method: `git checkout 7ac0524c2a8bb06d57957014d07aa45c55316baa -- <file_path>`
+- Verification: `git status -sb` confirmed files are present in the working tree and staged for addition.
