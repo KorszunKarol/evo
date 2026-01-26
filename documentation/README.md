@@ -20,6 +20,10 @@
 - [Genome Module](./modules/genome.md) - Genome storage, operations, and RNG utilities
 - [Phenotype Module](./modules/phenotype.md) - Building ECS entities from genomes
 - [Brain Module](./modules/brain.md) - MLP and NEAT inference engines
+- [Telemetry Module](./modules/telemetry.md) - Event and rollup telemetry pipeline
+- [Reproduction Module](./modules/reproduction.md) - Mating, crossover, mutation system
+- [Species Index Module](./modules/species_index.md) - Species clustering system
+- [Scenario Module](./modules/scenario.md) - Simulation configuration and initialization
 
 ## API Reference
 
@@ -47,11 +51,16 @@
 - PhenotypeBuilder → [Phenotype Module](./modules/phenotype.md#phenotypebuilder)
 - BrainInferenceSystem → [Core Simulation Module](./modules/core_simulation.md#braininferencesystem)
 - MotorSystem → [Core Simulation Module](./modules/core_simulation.md#motorsystem)
+- ReproductionSystem → [Reproduction Module](./modules/reproduction.md#reproductionsystem)
+- SpeciesIndexSystem → [Species Index Module](./modules/species_index.md#speciesindexsystem)
+- SimulationScenario → [Scenario Module](./modules/scenario.md#simulationscenario)
 
 **By Function**:
 - `SimulationApp::tick()` → [API Reference](./api/function_reference.md#tick)
 - `Scheduler::add_system()` → [API Reference](./api/function_reference.md#add_system)
 - `PhysicsSystem::tick()` → [API Reference](./api/function_reference.md#tick-1)
+- `setup_scenario()` → [Scenario Module](./modules/scenario.md#setup_scenario)
+- `seed_initial_population()` → [Scenario Module](./modules/scenario.md#seed_initial_population)
 
 **By Data Flow**:
 - Component access → [Data Contracts](./data-contracts/inter_module_contracts.md#component-access-contracts)
@@ -60,6 +69,8 @@
 - Genome storage → [Genetics Contracts](./data-contracts/genetics.md#genome-storage-contracts)
 - Phenotype building → [Genetics Contracts](./data-contracts/genetics.md#phenotype-building-contracts)
 - Brain inference → [Genetics Contracts](./data-contracts/genetics.md#brain-inference-contracts)
+- Reproduction → [Genetics Contracts](./data-contracts/genetics.md#reproduction-contracts)
+- Species indexing → [Genetics Contracts](./data-contracts/genetics.md#species-indexing-contracts)
 
 ## Documentation Standards
 
@@ -109,4 +120,3 @@ When adding new code:
 - **Keep in sync**: Documentation should match code
 - **Update on changes**: Modify docs when APIs change
 - **Review regularly**: Ensure accuracy and completeness
-
