@@ -19,6 +19,7 @@
 #include "evolution/sim/reproduction_system.h"
 #include "evolution/sim/species_index_system.h"
 #include "evolution/sim/stats_system.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -110,6 +111,22 @@ void setup_scenario(SimulationApp& app,
     }
     app.scheduler().add_system(std::make_unique<PhysicsSystem>(std::move(backend)));
     app.scheduler().add_system(std::make_unique<StatsSystem>(1.0));
+
+    if (scenario.enable_telemetry) {
+        TelemetryTargeting targeting{};
+        targeting.sampling_rate = scenario.telemetry_sampling_rate;
+        RollupConfig rollup{};
+        rollup.interval_seconds = scenario.telemetry_rollup_interval;
+        rollup.buffer_size = scenario.telemetry_buffer_size;
+
+        auto telemetry = std::make_unique<TelemetrySystem>(scenario.telemetry_output_dir,
+                                                          scenario.telemetry_run_id,
+                                                          targeting,
+                                                          rollup);
+        TelemetrySystem* telemetry_ptr = telemetry.get();
+        app.scheduler().add_system(std::move(telemetry));
+        app.registry().ctx().emplace<TelemetryContext>(TelemetryContext{.system = telemetry_ptr});
+    }
 
     spdlog::info("Scenario ready: initial population {}", scenario.initial_population);
 }
