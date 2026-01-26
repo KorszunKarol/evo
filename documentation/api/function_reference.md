@@ -1370,4 +1370,492 @@ void tick(SimulationContext& context) override;
 **Side Effects**: Updates soil nutrient diffusion and regeneration
 
 **Service Requirements**: `SoilGrid` in `registry.ctx()`
+---
 
+## TelemetrySystem
+
+### Construction
+
+```cpp
+explicit TelemetrySystem(const std::filesystem::path& output_dir,
+                         std::string_view run_id = "default",
+                         const TelemetryTargeting& targeting = {},
+                         const RollupConfig& rollup_config = {});
+```
+
+**Parameters**:
+- `output_dir`: `std::filesystem::path` - Output root for telemetry files
+- `run_id`: `std::string_view` - Identifier for the run (used in output records)
+- `targeting`: `TelemetryTargeting` - Filtering and sampling configuration
+- `rollup_config`: `RollupConfig` - Rollup cadence and buffer configuration
+
+**Returns**: `TelemetrySystem` instance
+
+**Exceptions**: `std::filesystem::filesystem_error` if output directory cannot be created
+
+**Complexity**: O(1)
+
+---
+
+### tick()
+
+```cpp
+void tick(SimulationContext& context);
+```
+
+**Parameters**:
+- `context`: `SimulationContext&` - Registry access and timing metadata
+
+**Returns**: `void`
+
+**Exceptions**: None (errors are logged)
+
+**Complexity**: O(S + E) where S = species count, E = entity count
+
+**Side Effects**:
+- Emits rollup snapshots on cadence
+- Emits movement metrics
+- Flushes buffered events when buffer size threshold is reached
+
+---
+
+### emit_event()
+
+```cpp
+bool emit_event(const TelemetryEvent& event, bool force_capture = false);
+```
+
+**Parameters**:
+- `event`: `TelemetryEvent` - Event record to buffer
+- `force_capture`: `bool` - If true, bypass sampling/targeting filters
+
+**Returns**: `bool` - True when event is captured
+
+**Exceptions**: None
+
+**Complexity**: O(1) amortized
+
+---
+
+### flush()
+
+```cpp
+void flush();
+```
+
+**Parameters**: None
+
+**Returns**: `void`
+
+**Exceptions**: `std::filesystem::filesystem_error` on write failure
+
+**Complexity**: O(N) where N = buffered events
+
+---
+
+### should_capture()
+
+```cpp
+[[nodiscard]] bool should_capture(entt::entity entity,
+                                  SpeciesId species_id = 0,
+                                  genetics::GenomeId genome_id = 0) const noexcept;
+```
+
+**Parameters**:
+- `entity`: `entt::entity` - Entity identifier
+- `species_id`: `SpeciesId` - Species identifier (optional)
+- `genome_id`: `genetics::GenomeId` - Genome identifier (optional)
+
+**Returns**: `bool` - True when entity matches targeting rules
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
+### should_sample()
+
+```cpp
+[[nodiscard]] bool should_sample() const noexcept;
+```
+
+**Parameters**: None
+
+**Returns**: `bool` - True when non-targeted sampling should occur
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
+### set_targeting()
+
+```cpp
+void set_targeting(const TelemetryTargeting& targeting) noexcept;
+```
+
+**Parameters**:
+- `targeting`: `TelemetryTargeting` - New targeting configuration
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
+## ReproductionSystem
+
+### Constructor
+
+```cpp
+explicit ReproductionSystem(genetics::GenomeStorage& storage,
+                            const genetics::ReproConfig& config,
+                            std::uint64_t global_seed) noexcept;
+```
+
+**Parameters**:
+- `storage`: `genetics::GenomeStorage&` - Reference to genome storage (must outlive system)
+  - Precondition: Storage must outlive system instance
+- `config`: `const genetics::ReproConfig&` - Reproduction configuration parameters
+- `global_seed`: `std::uint64_t` - Global seed for deterministic operations
+
+**Returns**: `ReproductionSystem` instance
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Not thread-safe
+
+**Warning**: Passing dangling storage reference results in undefined behavior
+
+---
+
+### tick()
+
+```cpp
+void tick(SimulationContext& context) override;
+```
+
+**Parameters**:
+- `context`: `SimulationContext&` - Simulation context with registry and timing
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(N × M) where N = eligible entities, M = candidates in radius
+
+**Thread Safety**: Not thread-safe
+
+**Side Effects**: Creates new offspring entities with mutated genomes
+
+**Component Requirements**: `ReproductionComponent`, `GenomeHandleComponent`, `TransformComponent`, `MetabolismComponent`
+
+**Note**: Only processes entities with ReproductionComponent and GenomeHandleComponent
+
+**Warning**: Must run after MetabolismSystem to ensure energy thresholds accurate
+
+---
+
+### name()
+
+```cpp
+[[nodiscard]] std::string_view name() const noexcept override;
+```
+
+**Parameters**: None
+
+**Returns**: `std::string_view` - Literal name `"reproduction"`
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Thread-safe for concurrent reads
+
+---
+
+### set_asexual_fallback()
+
+```cpp
+void set_asexual_fallback(bool enabled) noexcept;
+```
+
+**Parameters**:
+- `enabled`: `bool` - Whether asexual reproduction is allowed when no mate found
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Not thread-safe
+
+**Note**: Default is false (sexual reproduction only)
+
+---
+
+## SpeciesIndexSystem
+
+### Constructor
+
+```cpp
+explicit SpeciesIndexSystem(genetics::GenomeStorage& storage,
+                           const genetics::ReproConfig& config,
+                           std::size_t target_species_count = 10,
+                           double initial_threshold = 3.0) noexcept;
+```
+
+**Parameters**:
+- `storage`: `genetics::GenomeStorage&` - Reference to genome storage (must outlive system)
+  - Precondition: Storage must outlive system instance
+- `config`: `const genetics::ReproConfig&` - Reproduction configuration for distance computation
+- `target_species_count`: `std::size_t` - Target number of species to maintain (default: 10)
+- `initial_threshold`: `double` - Initial compatibility distance threshold (default: 3.0)
+
+**Returns**: `SpeciesIndexSystem` instance
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Not thread-safe
+
+**Note**: Threshold auto-adjusts to maintain target species count
+
+**Warning**: Storage must outlive system
+
+---
+
+### tick()
+
+```cpp
+void tick(SimulationContext& context) override;
+```
+
+**Parameters**:
+- `context`: `SimulationContext&` - Simulation context (unused but required by interface)
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(N²) where N = genome count (distance matrix computation)
+
+**Thread Safety**: Not thread-safe
+
+**Side Effects**: Updates species assignments for all genomes
+
+**Warning**: Expensive for large populations; consider running periodically
+
+---
+
+### name()
+
+```cpp
+[[nodiscard]] std::string_view name() const noexcept override;
+```
+
+**Parameters**: None
+
+**Returns**: `std::string_view` - Literal name `"species_index"`
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Thread-safe for concurrent reads
+
+---
+
+### get_species()
+
+```cpp
+[[nodiscard]] SpeciesId get_species(genetics::GenomeId genome_id) const noexcept;
+```
+
+**Parameters**:
+- `genome_id`: `genetics::GenomeId` - Genome identifier
+
+**Returns**: `SpeciesId` - Species ID, or 0 if not found
+
+**Exceptions**: None
+
+**Complexity**: O(1) average
+
+**Thread Safety**: Not thread-safe
+
+**Note**: Returns 0 for unknown genomes
+
+---
+
+### species_count()
+
+```cpp
+[[nodiscard]] std::size_t species_count() const noexcept;
+```
+
+**Parameters**: None
+
+**Returns**: `std::size_t` - Number of distinct species
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Not thread-safe
+
+**Note**: Updated after each tick() call
+
+---
+
+### threshold()
+
+```cpp
+[[nodiscard]] double threshold() const noexcept;
+```
+
+**Parameters**: None
+
+**Returns**: `double` - Current compatibility threshold value
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+**Thread Safety**: Not thread-safe
+
+**Note**: Auto-adjusted to maintain target species count
+
+---
+
+## SpeciesId
+
+```cpp
+using SpeciesId = std::uint32_t;
+```
+
+**Type**: Type alias for `std::uint32_t`
+
+**Purpose**: Species identifier type used throughout the simulation
+
+---
+
+## SpeciesIndexContext
+
+```cpp
+struct SpeciesIndexContext {
+    SpeciesIndexSystem* system{nullptr};
+};
+```
+
+**Fields**:
+- `system`: `SpeciesIndexSystem*` - Pointer to the species index system (default: nullptr)
+
+**Purpose**: Registry context wrapper providing access to the species index system
+
+---
+
+## SimulationScenario
+
+```cpp
+struct SimulationScenario {
+    EnvironmentConfig environment{};
+    genetics::ReproConfig reproduction{};
+    std::size_t initial_population{24};
+    std::uint64_t genome_seed{2025};
+    std::uint64_t reproduction_seed{0xBEEFu};
+    bool enable_species_index{true};
+    bool enable_telemetry{true};
+    std::string telemetry_output_dir{"output"};
+    std::string telemetry_run_id{"default"};
+    double telemetry_rollup_interval{1.0};
+    std::size_t telemetry_buffer_size{1000};
+    double telemetry_sampling_rate{0.0};
+};
+```
+
+**Purpose**: High-level configuration for running an evolution experiment
+
+**Fields**:
+- `environment`: `EnvironmentConfig` - Terrain/soil/plants configuration (default: {})
+- `reproduction`: `genetics::ReproConfig` - Reproduction and mutation parameters (default: {})
+- `initial_population`: `std::size_t` - Number of randomly generated creatures at start (default: 24)
+- `genome_seed`: `std::uint64_t` - Seed for initial genome generation (default: 2025)
+- `reproduction_seed`: `std::uint64_t` - Global reproduction system seed (default: 0xBEEFu)
+- `enable_species_index`: `bool` - Run species clustering system (default: true)
+- `enable_telemetry`: `bool` - Enable telemetry system for offline analytics (default: true)
+- `telemetry_output_dir`: `std::string` - Directory for telemetry outputs (default: "output")
+- `telemetry_run_id`: `std::string` - Identifier for telemetry run (default: "default")
+- `telemetry_rollup_interval`: `double` - Rollup cadence in seconds, 0 disables (default: 1.0)
+- `telemetry_buffer_size`: `std::size_t` - Event buffer flush threshold (default: 1000)
+- `telemetry_sampling_rate`: `double` - Sampling rate for non-targeted events (default: 0.0)
+
+---
+
+## setup_scenario()
+
+```cpp
+void setup_scenario(SimulationApp& app,
+                    genetics::GenomeStorage& storage,
+                    const SimulationScenario& scenario);
+```
+
+**Parameters**:
+- `app`: `SimulationApp&` - Simulation application to configure
+- `storage`: `genetics::GenomeStorage&` - Genome storage that outlives registered systems
+  - Precondition: Storage must outlive registered systems
+- `scenario`: `const SimulationScenario&` - Scenario configuration (environment + evolution settings)
+
+**Returns**: `void`
+
+**Exceptions**: May propagate exceptions from system construction or registration
+
+**Complexity**: O(1) for system registration + O(N) for initial environment setup
+
+**Side Effects**:
+- Registers environment bootstrap systems
+- Registers telemetry system if enabled
+- Registers species index system if enabled
+- Registers reproduction system
+
+**Note**: Initializes the simulation app according to the supplied scenario
+
+---
+
+## seed_initial_population()
+
+```cpp
+void seed_initial_population(entt::registry& registry,
+                             genetics::GenomeStorage& storage,
+                             const SimulationScenario& scenario);
+```
+
+**Parameters**:
+- `registry`: `entt::registry&` - Registry receiving the entities
+- `storage`: `genetics::GenomeStorage&` - Genome storage used to create genomes
+  - Precondition: Storage must remain valid for entity lifetimes
+- `scenario`: `const SimulationScenario&` - Scenario configuration for spawn counts
+
+**Returns**: `void`
+
+**Exceptions**: May propagate exceptions from genome storage or registry operations
+
+**Complexity**: O(N) where N = `scenario.initial_population`
+
+**Side Effects**:
+- Creates new entities in registry
+- Generates random genomes using `scenario.genome_seed`
+- Assigns initial components (Transform, Kinematics, Metabolism, etc.)
+
+**Note**: Seeds an initial population of randomly generated genomes
+
+---
+
+## Vec3

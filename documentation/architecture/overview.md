@@ -58,7 +58,11 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `Scheduler`: System execution manager
    - `SimulationContext`: Tick-scoped state access
 
-2. **sim/components** - ECS component definitions
+2. **sim/telemetry** - Observability and analytics output
+   - `TelemetrySystem`: Event and rollup telemetry
+   - `TelemetryContext`: Registry access for emitters
+
+3. **sim/components** - ECS component definitions
    - `TransformComponent`: Spatial positioning
    - `KinematicsComponent`: Velocity and forces
    - `MetabolismComponent`: Energy management
@@ -72,14 +76,14 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `ActuationComponent`: Brain output commands
    - `ReproductionComponent`: Reproduction cooldown and policy
 
-3. **sim/physics** - Physics backends and pipeline
+4. **sim/physics** - Physics backends and pipeline
    - `physics_system.h/.cpp`: System façade delegating to backends
    - `physics/backend.h`: Backend interface
    - `physics/simple_backend.*`: Deterministic CPU backend
    - `physics/broad_phase|narrow_phase|solver.*`: Collision pipeline helpers
    - **Terrain Integration**: Heightfield collision via `Terrain` service
 
-4. **sim/environment** - Living world systems
+5. **sim/environment** - Living world systems
    - `environment/environment.h`: Terrain and soil grid definitions
    - `environment/environment_bootstrap.*`: One-time terrain/soil initialization
    - `environment/soil_system.*`: Nutrient diffusion and regeneration
@@ -87,8 +91,23 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `environment/feeding_system.*`: Energy transfer from plants to herbivores
    - **Services**: `Terrain` and `SoilGrid` stored in registry context
 
-5. **sim/math** - Mathematical utilities
+6. **sim/math** - Mathematical utilities
    - `Vec3`: 3D vector operations
+
+7. **sim/reproduction_system** - Mate selection and reproduction
+   - `ReproductionSystem`: Preference-driven mate selection with crossover/mutation
+   - Uses PreferenceNet when available, falls back to energy/cooldown rules
+   - Creates offspring genomes and builds phenotype entities
+
+8. **sim/species_index_system** - Species clustering and indexing
+   - `SpeciesIndexSystem`: Clusters genomes into species using compatibility distance
+   - Maintains dynamic threshold to keep species count in target range
+   - Provides species ID lookup for genomes
+
+9. **sim/scenario** - Simulation configuration and initialization
+   - `SimulationScenario`: High-level experiment configuration
+   - `setup_scenario()`: Configures simulation app with systems and services
+   - `seed_initial_population()`: Spawns initial population from randomly generated genomes
 
 ## Data Flow
 
@@ -298,4 +317,3 @@ sim/
 - [Module Documentation](./modules/) - Detailed module specs
 - [API Reference](./api/) - Complete API documentation
 - [Data Contracts](./data-contracts/) - Inter-module data flow
-

@@ -237,6 +237,8 @@ struct GenomeHandleComponent {
 - **No explicit dependencies**: Systems run in registration order
 - **Implicit dependencies**: Systems may depend on other systems' outputs
 - **Example**: Physics system should run after force-accumulating systems
+- **ReproductionSystem**: Must run after `MetabolismSystem` to ensure energy thresholds accurate
+- **SpeciesIndexSystem**: Expensive O(N²) operation; consider running periodically rather than every tick for large populations
 
 ---
 
@@ -442,6 +444,48 @@ Physics Backend (narrow-phase)
 - Arrays are reset before each update to avoid drift.
 - Consumers treat the struct as read-only between updates.
 
+---
+
+### SpeciesIndexContext Service Contract
+
+**Contract**: `SpeciesIndexContext` provides access to the species clustering system stored in the registry context when `scenario.enable_species_index` is true.
+
+**Read Contract**:
+- **Readers**: Telemetry systems (species rollups), future evolutionary analysis systems
+- **Read Fields**: `SpeciesIndexContext::system` (pointer)
+- **Read Frequency**: On-demand (when species classification needed)
+- **Thread Safety**: Not thread-safe (simulation thread only)
+
+**Write Contract**:
+- **Writers**: `setup_scenario()` during simulation initialization
+- **Write Fields**: `SpeciesIndexContext::system` (pointer assignment)
+- **Write Frequency**: Once during setup
+- **Thread Safety**: Not thread-safe
+- **Validation**: Context only exists when `scenario.enable_species_index == true`
+
+**Data Format**:
+```cpp
+struct SpeciesIndexContext {
+    SpeciesIndexSystem* system{nullptr};  // Pointer to species clustering system
+};
+```
+
+**Gating**:
+- **Scenario Flag**: `SimulationScenario::enable_species_index` controls context availability
+- **When Disabled**: Context not added to registry; systems must check existence before access
+- **When Enabled**: Context available for entire simulation lifetime
+
+**Performance Considerations**:
+- **Cost**: `SpeciesIndexSystem::tick()` is O(N²) where N = genome count (distance matrix computation)
+- **Recommendation**: Run periodically rather than every tick for large populations
+- **Access**: `system->get_species(genome_id)` provides O(1) average species lookup
+
+**Guarantees**:
+- Context pointer is valid for the lifetime of the simulation (when enabled)
+- `system == nullptr` indicates species indexing disabled
+- Species IDs are deterministic for a given threshold and genome set
+- System maintains species count within configured target range via dynamic threshold adjustment
+
 ### Plants ↔ Soil Contract
 
 **Contract**: Plants sample soil nutrients for growth.
@@ -536,4 +580,69 @@ FeedingSystem
 - **Update Frequency**: Periodic snapshots (not every tick)
 - **Delta Compression**: Only changed components transmitted
 - **Consistency**: Deterministic simulation ensures consistency
+---
 
+## Telemetry Contracts
+
+### Telemetry Context Access
+
+**Read Contract**:
+- **Readers**: Systems emitting events (FeedingSystem, MetabolismSystem, ReproductionSystem, SpeciesIndexSystem, BrainInferenceSystem, MotorSystem)
+- **Read Fields**: `TelemetryContext::system`
+- **Read Frequency**: Event-triggered
+- **Thread Safety**: Not thread-safe (simulation thread only)
+
+**Write Contract**:
+- **Writers**: Scenario setup
+- **Write Fields**: `TelemetryContext::system`
+- **Write Frequency**: Once during setup
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct TelemetryContext {
+    TelemetrySystem* system;
+};
+```
+
+**Guarantees**:
+- Pointer is valid for the lifetime of the simulation
+- Context exists only when telemetry is enabled
+
+---
+
+### Telemetry Output Files
+
+**Events**:
+- **File**: `telemetry/events.jsonl`
+- **Format**: JSON Lines
+- **Schema**:
+```json
+{
+  "schema_version": 2,
+  "run_id": "default",
+  "type": "ENTITY_SPAWN",
+  "sim_time": 12.34,
+  "payload": { "entity_id": 42 }
+}
+```
+
+**Rollups**:
+- **File**: `telemetry/metrics.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy
+```
+
+**Species Rollups**:
+- **File**: `telemetry/species_rollups.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,species_id,population,mean_energy
+```
+
+**Guarantees**:
+- `schema_version` increments on breaking schema changes
+- `run_id` is stable across all records within a run
