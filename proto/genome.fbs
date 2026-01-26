@@ -94,6 +94,16 @@ table LifeStage {
   reproduction_allowed: bool = true;
 }
 
+table PlantTraits {
+  growth_rate: float;
+  max_energy: float;
+  seed_interval: float;
+  seed_min_energy: float;
+  seed_cost: float;
+  seed_radius: float;
+  establish_prob: float;
+}
+
 table TraitsCache {
   mass: float;
   basal_rate: float;
