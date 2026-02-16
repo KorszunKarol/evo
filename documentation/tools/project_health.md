@@ -2,6 +2,7 @@
 
 Use `tools/project_health.sh` to generate current values, then paste summary here for tracked checkpoints.
 Use `tools/branch_audit.sh` and `tools/stash_audit.sh` for branch/stash debt audits.
+Use `tools/salvage_stash.sh --apply` to materialize stashes into salvage branches safely.
 
 ## Checkpoint
 - Date:
