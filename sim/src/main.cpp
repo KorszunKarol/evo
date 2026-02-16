@@ -15,7 +15,7 @@ int main() {
     spdlog::info("Launching evolution scenario");
 
     SimulationApp app;
-    genetics::GenomeStorage genome_storage;
+    evolution::genetics::GenomeStorage genome_storage;
 
     SimulationScenario scenario{};
     scenario.environment.terrain.width_cells = 512;
@@ -52,4 +52,3 @@ int main() {
     spdlog::info("Scenario complete at t={}s", app.simulation_time());
     return 0;
 }
-

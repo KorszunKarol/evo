@@ -236,12 +236,14 @@ TEST(PlantSpeciesMapping, InitialSeedingRespectsSpeciesConstraints) {
     const auto& species_registry = registry.ctx().get<PlantSpeciesRegistry>();
 
     auto view = registry.view<TransformComponent, PlantComponent>();
+    std::size_t alive_plants = 0;
     for (auto entity : view) {
         const auto& transform = view.get<TransformComponent>(entity);
         const auto& plant = view.get<PlantComponent>(entity);
         if (!plant.alive) {
             continue;
         }
+        ++alive_plants;
 
         const PlantSpecies& species = species_registry.get(plant.species_id);
         const BiomeId biome = biome_map.sample(transform.position.x, transform.position.z);
@@ -253,5 +255,6 @@ TEST(PlantSpeciesMapping, InitialSeedingRespectsSpeciesConstraints) {
             << "Species " << static_cast<int>(species.id)
             << " should be allowed at (" << transform.position.x << ", " << transform.position.z << ")";
     }
-}
 
+    EXPECT_GT(alive_plants, 0u) << "Initial plant seeding should spawn at least one plant";
+}

@@ -15,7 +15,7 @@ namespace evolution::sim {
 namespace {
 
 [[nodiscard]] bool should_place_on_normal(const Vec3& normal) noexcept {
-    constexpr double min_dot = 0.45;  // Reject slopes steeper than ~63 degrees.
+    constexpr double min_dot = 0.1;  // Reject slopes steeper than ~84 degrees.
     return normal.y >= min_dot;
 }
 
@@ -219,6 +219,75 @@ void seed_initial_plants(entt::registry& registry, const EnvironmentConfig& conf
         ++spawned;
     }
 
+    // If random sampling couldn't place anything, fall back to a deterministic scan.
+    // This keeps constraints intact while preventing zero-plant worlds.
+    if (spawned == 0 && species_registry != nullptr) {
+        const double max_x = static_cast<double>(terrain.width() - 1) * terrain.cell_size();
+        const double max_z = static_cast<double>(terrain.height_cells() - 1) * terrain.cell_size();
+        const double step = std::max(terrain.cell_size(), 0.25);
+
+        bool placed = false;
+        for (double scan_z = 0.0; !placed && scan_z <= max_z; scan_z += step) {
+            for (double scan_x = 0.0; !placed && scan_x <= max_x; scan_x += step) {
+                const double x = scan_x;
+                const double z = scan_z;
+                const double y = terrain.height(x, z);
+                const Vec3 normal = terrain.normal(x, z);
+
+                if (!should_place_on_normal(normal)) {
+                    continue;
+                }
+
+                const BiomeId biome = biome_map != nullptr ? biome_map->sample(x, z) : BiomeId::Plains;
+                double depth = 0.0;
+                double shore_distance = std::numeric_limits<double>::infinity();
+                WaterZone zone = WaterZone::Terrestrial;
+                if (water_map != nullptr) {
+                    depth = water_map->depth(x, z);
+                    shore_distance = water_map->shore_distance(x, z);
+                    zone = classify_water_zone(*water_map, x, z);
+                }
+
+                const PlantSpecies& selected_species =
+                    select_species_for_location(*species_registry, biome, zone, depth, shore_distance, rng);
+                if (!species_allows_location(selected_species, biome, zone, depth, shore_distance)) {
+                    continue;
+                }
+
+                const entt::entity plant = registry.create();
+                TransformComponent transform{};
+                transform.position = Vec3{x, y, z};
+                registry.emplace<TransformComponent>(plant, transform);
+
+                PlantComponent plant_component{};
+                plant_component.species_id = selected_species.id;
+                plant_component.max_energy = selected_species.max_energy;
+                const double init_energy = selected_species.max_energy * energy_fraction(rng);
+                plant_component.energy = std::clamp(init_energy, 2.0, selected_species.max_energy);
+                plant_component.radius = selected_species.radius;
+                plant_component.growth_rate = selected_species.growth_rate;
+                plant_component.seed_interval = selected_species.seed_interval;
+                plant_component.cleanup_delay = 8.0;
+                registry.emplace<PlantComponent>(plant, plant_component);
+
+                PlantSeedParams seed_params{};
+                seed_params.seed_min_energy = std::max(1.0, selected_species.max_energy * 0.6);
+                seed_params.seed_cost = std::max(0.5, selected_species.max_energy * 0.25);
+                seed_params.seed_radius = selected_species.seed_radius;
+                seed_params.establish_probability = selected_species.establish_prob;
+                registry.emplace<PlantSeedParams>(plant, seed_params);
+
+                registry.emplace<NameComponent>(plant, NameComponent{.value = "plant"});
+                ++spawned;
+                placed = true;
+            }
+        }
+
+        if (placed) {
+            spdlog::warn("Initial random seeding spawned 0 plants; placed 1 via deterministic scan");
+        }
+    }
+
     if (spawned < config.plants.initial_count) {
         spdlog::warn("Requested {} plants but only spawned {} after {} attempts",
                      config.plants.initial_count,
@@ -232,5 +301,3 @@ void seed_initial_plants(entt::registry& registry, const EnvironmentConfig& conf
 }
 
 }  // namespace evolution::sim
-
-

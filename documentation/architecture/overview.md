@@ -58,7 +58,11 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `Scheduler`: System execution manager
    - `SimulationContext`: Tick-scoped state access
 
-2. **sim/components** - ECS component definitions
+2. **sim/telemetry** - Observability and analytics output
+   - `TelemetrySystem`: Event and rollup telemetry
+   - `TelemetryContext`: Registry access for emitters
+
+3. **sim/components** - ECS component definitions
    - `TransformComponent`: Spatial positioning
    - `KinematicsComponent`: Velocity and forces
    - `MetabolismComponent`: Energy management
@@ -72,7 +76,7 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `ActuationComponent`: Brain output commands
    - `ReproductionComponent`: Reproduction cooldown and policy
 
-3. **sim/physics** - Physics backends and pipeline
+4. **sim/physics** - Physics backends and pipeline
    - `physics_system.h/.cpp`: System façade delegating to backends
    - `physics/backend.h`: Backend interface
    - `physics/simple_backend.*`: Deterministic CPU backend
@@ -298,4 +302,3 @@ sim/
 - [Module Documentation](./modules/) - Detailed module specs
 - [API Reference](./api/) - Complete API documentation
 - [Data Contracts](./data-contracts/) - Inter-module data flow
-

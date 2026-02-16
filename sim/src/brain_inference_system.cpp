@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <sstream>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/environment/environment.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -109,6 +111,8 @@ BrainInferenceSystem::BrainInferenceSystem(genetics::GenomeStorage& storage) noe
 
 void BrainInferenceSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
     auto view = registry.view<BrainComponent,
                               ActuationComponent,
                               GenomeHandleComponent,
@@ -381,6 +385,28 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         actuation.eat = eat;
         actuation.update_skip = 0;
 
+        if (telemetry != nullptr) {
+            const bool force_capture = telemetry->should_capture(entity, 0, handle.id);
+            std::ostringstream payload;
+            payload << "{"
+                    << "\"entity_id\":" << static_cast<std::uint32_t>(entity)
+                    << ",\"genome_id\":" << handle.id
+                    << ",\"impulse_x\":" << impulse_x
+                    << ",\"impulse_z\":" << impulse_z
+                    << ",\"jump\":" << (jump ? "true" : "false")
+                    << ",\"eat\":" << (eat ? "true" : "false")
+                    << ",\"brain_kind\":" << static_cast<std::uint32_t>(brain.kind)
+                    << ",\"output_count\":" << brain.output_count
+                    << "}";
+
+            TelemetryEvent event{
+                TelemetryEventType::BRAIN_OUTPUT,
+                context.simulation_time(),
+                payload.str()
+            };
+            telemetry->emit_event(event, force_capture);
+        }
+
         brain.accumulator = std::fmod(brain.accumulator, brain.update_interval);
     }
 }
@@ -405,4 +431,3 @@ genetics::BrainNeat& BrainInferenceSystem::fetch_neat_runtime(genetics::GenomeId
 }
 
 }  // namespace evolution::sim
-

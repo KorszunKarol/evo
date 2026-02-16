@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <unordered_set>
 
 #include <spdlog/spdlog.h>
+
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -18,16 +21,37 @@ SpeciesIndexSystem::SpeciesIndexSystem(genetics::GenomeStorage& storage,
     , threshold_(initial_threshold) {}
 
 void SpeciesIndexSystem::tick(SimulationContext& context) {
-    (void)context;
-    UpdateClustering();
+    UpdateClustering(context);
 }
 
-void SpeciesIndexSystem::UpdateClustering() {
+void SpeciesIndexSystem::UpdateClustering(SimulationContext& context) {
     // Get all genome IDs
     genome_list_ = storage_.ids();
     if (genome_list_.empty()) {
         species_map_.clear();
         species_count_ = 0;
+        if (!previous_species_.empty()) {
+            if (auto* telemetry_ctx = context.registry().ctx().find<TelemetryContext>()) {
+                TelemetrySystem* telemetry = telemetry_ctx->system;
+                if (telemetry != nullptr) {
+                    const double sim_time = context.simulation_time();
+                    for (const auto species_id : previous_species_) {
+                        std::ostringstream payload;
+                        payload << "{"
+                                << "\"species_id\":" << species_id
+                                << ",\"population\":0"
+                                << "}";
+                        TelemetryEvent event{
+                            TelemetryEventType::SPECIES_EXTINCT,
+                            sim_time,
+                            payload.str()
+                        };
+                        telemetry->emit_event(event, false);
+                    }
+                }
+            }
+            previous_species_.clear();
+        }
         return;
     }
 
@@ -70,12 +94,14 @@ void SpeciesIndexSystem::UpdateClustering() {
     // Adjust threshold to maintain target species count
     AdjustThreshold(species_count_);
 
+    std::unordered_map<SpeciesId, std::size_t> species_sizes;
+    species_sizes.reserve(species_map_.size());
+    for (const auto& [_, species_id] : species_map_) {
+        species_sizes[species_id]++;
+    }
+
     // Log statistics
     if (species_count_ > 0) {
-        std::unordered_map<SpeciesId, std::size_t> species_sizes;
-        for (const auto& [_, species_id] : species_map_) {
-            species_sizes[species_id]++;
-        }
 
         std::size_t max_size = 0;
         std::size_t min_size = genome_list_.size();
@@ -86,6 +112,49 @@ void SpeciesIndexSystem::UpdateClustering() {
 
         spdlog::info("SpeciesIndexSystem: {} species, threshold={:.3f}, sizes=[{}, {}]",
                      species_count_, threshold_, min_size, max_size);
+    }
+
+    if (auto* telemetry_ctx = context.registry().ctx().find<TelemetryContext>()) {
+        TelemetrySystem* telemetry = telemetry_ctx->system;
+        if (telemetry != nullptr) {
+            std::unordered_set<SpeciesId> current_species;
+            current_species.reserve(species_sizes.size());
+
+            for (const auto& [species_id, size] : species_sizes) {
+                current_species.insert(species_id);
+                if (!previous_species_.contains(species_id)) {
+                    std::ostringstream payload;
+                    payload << "{"
+                            << "\"species_id\":" << species_id
+                            << ",\"population\":" << size
+                            << "}";
+                    TelemetryEvent event{
+                        TelemetryEventType::SPECIES_CREATED,
+                        context.simulation_time(),
+                        payload.str()
+                    };
+                    telemetry->emit_event(event, false);
+                }
+            }
+
+            for (const auto species_id : previous_species_) {
+                if (!current_species.contains(species_id)) {
+                    std::ostringstream payload;
+                    payload << "{"
+                            << "\"species_id\":" << species_id
+                            << ",\"population\":0"
+                            << "}";
+                    TelemetryEvent event{
+                        TelemetryEventType::SPECIES_EXTINCT,
+                        context.simulation_time(),
+                        payload.str()
+                    };
+                    telemetry->emit_event(event, false);
+                }
+            }
+
+            previous_species_ = std::move(current_species);
+        }
     }
 }
 
@@ -109,4 +178,3 @@ SpeciesId SpeciesIndexSystem::get_species(genetics::GenomeId genome_id) const no
 }
 
 }  // namespace evolution::sim
-

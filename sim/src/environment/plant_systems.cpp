@@ -121,7 +121,7 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         const double world_x = std::clamp(target_x, 0.0, static_cast<double>(terrain.width() - 1) * terrain.cell_size());
         const double world_z = std::clamp(target_z, 0.0, static_cast<double>(terrain.height_cells() - 1) * terrain.cell_size());
         const Vec3 normal = terrain.normal(world_x, world_z);
-        if (normal.y < 0.45) {
+        if (normal.y < 0.1) {
             continue;
         }
         if (probability(rng_) > params.establish_probability) {
@@ -212,5 +212,3 @@ void PlantSpatialSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-
-

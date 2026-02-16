@@ -103,6 +103,16 @@ table TraitsCache {
   trait_latent: [float];
 }
 
+table PlantTraits {
+  growth_rate: float;
+  max_energy: float;
+  seed_interval: float;
+  seed_min_energy: float;
+  seed_cost: float;
+  seed_radius: float;
+  establish_prob: float;
+}
+
 table Genome {
   version: uint16;
   id: uint64;
@@ -110,6 +120,7 @@ table Genome {
   parents: [uint64];
   rng_seed: uint64;
   body: Body;
+  plant_traits: PlantTraits;
   brain_kind: BrainKind;
   mlp: MLP;
   neat: NEAT;

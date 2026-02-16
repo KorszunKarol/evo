@@ -269,6 +269,7 @@ add_executable(sim_tests
     tests/sim/test_scenarios.cpp
     tests/sim/test_ecs_lifecycle.cpp
     tests/sim/test_integration_invariants.cpp
+    tests/sim/test_property_based.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE

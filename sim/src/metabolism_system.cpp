@@ -1,5 +1,9 @@
 #include "evolution/sim/metabolism_system.h"
 
+#include <sstream>
+
+#include "evolution/sim/telemetry_system.h"
+
 namespace evolution::sim {
 
 MetabolismSystem::MetabolismSystem(bool destroy_on_zero) noexcept
@@ -8,6 +12,8 @@ MetabolismSystem::MetabolismSystem(bool destroy_on_zero) noexcept
 void MetabolismSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
     const double dt = context.fixed_dt();
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
 
     recycle_bin_.clear();
 
@@ -24,6 +30,25 @@ void MetabolismSystem::tick(SimulationContext& context) {
         }
 
         if (destroy_on_zero_ && metabolism.energy <= 0.0) {
+            if (telemetry != nullptr) {
+                const auto* genome = registry.try_get<GenomeHandleComponent>(entity);
+                const genetics::GenomeId genome_id = genome != nullptr ? genome->id : 0;
+                const bool force_capture = telemetry->should_capture(entity, 0, genome_id);
+
+                std::ostringstream payload;
+                payload << "{"
+                        << "\"entity_id\":" << static_cast<std::uint32_t>(entity)
+                        << ",\"genome_id\":" << genome_id
+                        << ",\"cause\":\"STARVATION\""
+                        << "}";
+
+                TelemetryEvent event{
+                    TelemetryEventType::ENTITY_DEATH,
+                    context.simulation_time(),
+                    payload.str()
+                };
+                telemetry->emit_event(event, force_capture);
+            }
             recycle_bin_.push_back(entity);
         }
     });
@@ -40,5 +65,4 @@ void MetabolismSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-
 

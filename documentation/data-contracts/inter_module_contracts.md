@@ -536,4 +536,69 @@ FeedingSystem
 - **Update Frequency**: Periodic snapshots (not every tick)
 - **Delta Compression**: Only changed components transmitted
 - **Consistency**: Deterministic simulation ensures consistency
+---
 
+## Telemetry Contracts
+
+### Telemetry Context Access
+
+**Read Contract**:
+- **Readers**: Systems emitting events (FeedingSystem, MetabolismSystem, ReproductionSystem, SpeciesIndexSystem, BrainInferenceSystem, MotorSystem)
+- **Read Fields**: `TelemetryContext::system`
+- **Read Frequency**: Event-triggered
+- **Thread Safety**: Not thread-safe (simulation thread only)
+
+**Write Contract**:
+- **Writers**: Scenario setup
+- **Write Fields**: `TelemetryContext::system`
+- **Write Frequency**: Once during setup
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct TelemetryContext {
+    TelemetrySystem* system;
+};
+```
+
+**Guarantees**:
+- Pointer is valid for the lifetime of the simulation
+- Context exists only when telemetry is enabled
+
+---
+
+### Telemetry Output Files
+
+**Events**:
+- **File**: `telemetry/events.jsonl`
+- **Format**: JSON Lines
+- **Schema**:
+```json
+{
+  "schema_version": 2,
+  "run_id": "default",
+  "type": "ENTITY_SPAWN",
+  "sim_time": 12.34,
+  "payload": { "entity_id": 42 }
+}
+```
+
+**Rollups**:
+- **File**: `telemetry/metrics.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy
+```
+
+**Species Rollups**:
+- **File**: `telemetry/species_rollups.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,species_id,population,mean_energy
+```
+
+**Guarantees**:
+- `schema_version` increments on breaking schema changes
+- `run_id` is stable across all records within a run

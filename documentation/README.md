@@ -20,6 +20,7 @@
 - [Genome Module](./modules/genome.md) - Genome storage, operations, and RNG utilities
 - [Phenotype Module](./modules/phenotype.md) - Building ECS entities from genomes
 - [Brain Module](./modules/brain.md) - MLP and NEAT inference engines
+- [Telemetry Module](./modules/telemetry.md) - Event and rollup telemetry pipeline
 
 ## API Reference
 
@@ -109,4 +110,3 @@ When adding new code:
 - **Keep in sync**: Documentation should match code
 - **Update on changes**: Modify docs when APIs change
 - **Review regularly**: Ensure accuracy and completeness
-

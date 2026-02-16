@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -13,6 +15,8 @@ void FeedingSystem::tick(SimulationContext& context) {
     if (spatial_index == nullptr) {
         return;
     }
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
     auto* stats = registry.ctx().find<FeedingStatistics>();
     if (stats != nullptr) {
         stats->energy_transferred_last_tick = 0.0;
@@ -69,6 +73,27 @@ void FeedingSystem::tick(SimulationContext& context) {
                     stats->energy_transferred_last_tick += transferable;
                 }
 
+                if (telemetry != nullptr) {
+                    const auto* genome = registry.try_get<GenomeHandleComponent>(entity);
+                    const genetics::GenomeId genome_id = genome != nullptr ? genome->id : 0;
+                    const bool force_capture = telemetry->should_capture(entity, 0, genome_id);
+
+                    std::ostringstream payload;
+                    payload << "{"
+                            << "\"entity_id\":" << static_cast<std::uint32_t>(entity)
+                            << ",\"genome_id\":" << genome_id
+                            << ",\"plant_species\":" << static_cast<std::uint32_t>(plant->species_id)
+                            << ",\"energy\":" << transferable
+                            << "}";
+
+                    TelemetryEvent event{
+                        TelemetryEventType::FEEDING_EVENT,
+                        context.simulation_time(),
+                        payload.str()
+                    };
+                    telemetry->emit_event(event, force_capture);
+                }
+
                 if (plant->energy <= 0.0) {
                     plant->energy = 0.0;
                     plant->alive = false;
@@ -79,5 +104,4 @@ void FeedingSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-
 

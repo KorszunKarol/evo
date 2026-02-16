@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
+
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
 
@@ -22,6 +25,8 @@ MotorSystem::MotorSystem(double impulse_scale, double jump_impulse) noexcept
 
 void MotorSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
     auto view = registry.view<ActuationComponent,
                               KinematicsComponent,
                               MetabolismComponent,
@@ -59,6 +64,33 @@ void MotorSystem::tick(SimulationContext& context) {
             feeding->request_eat = actuation.eat;
         }
 
+        if (telemetry != nullptr) {
+            const auto* genome = registry.try_get<GenomeHandleComponent>(entity);
+            const genetics::GenomeId genome_id = genome != nullptr ? genome->id : 0;
+            const bool force_capture = telemetry->should_capture(entity, 0, genome_id);
+
+            std::ostringstream payload;
+            payload << "{"
+                    << "\"entity_id\":" << static_cast<std::uint32_t>(entity)
+                    << ",\"genome_id\":" << genome_id
+                    << ",\"impulse_x\":" << actuation.impulse_x
+                    << ",\"impulse_z\":" << actuation.impulse_z
+                    << ",\"jump_requested\":" << (actuation.jump ? "true" : "false")
+                    << ",\"jump_applied\":" << (jump_applied ? "true" : "false")
+                    << ",\"force_x\":" << planar_force.x
+                    << ",\"force_y\":" << planar_force.y
+                    << ",\"force_z\":" << planar_force.z
+                    << ",\"energy_cost\":" << total_cost
+                    << "}";
+
+            TelemetryEvent event{
+                TelemetryEventType::ACTUATION_APPLIED,
+                context.simulation_time(),
+                payload.str()
+            };
+            telemetry->emit_event(event, force_capture);
+        }
+
         actuation.impulse_x = 0.0;
         actuation.impulse_z = 0.0;
         actuation.jump = false;
@@ -68,4 +100,3 @@ void MotorSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-

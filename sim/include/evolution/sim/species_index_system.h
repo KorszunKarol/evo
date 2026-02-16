@@ -113,7 +113,7 @@ public:
     [[nodiscard]] double threshold() const noexcept { return threshold_; }
 
 private:
-    void UpdateClustering();
+    void UpdateClustering(SimulationContext& context);
     void AdjustThreshold(std::size_t current_species_count);
 
     static constexpr std::string_view name_ = "species_index";
@@ -124,7 +124,12 @@ private:
     std::size_t species_count_{0};
     std::unordered_map<genetics::GenomeId, SpeciesId> species_map_{};
     std::vector<genetics::GenomeId> genome_list_{};
+    std::unordered_set<SpeciesId> previous_species_{};
+};
+
+/// @brief Registry context wrapper providing access to the species index system.
+struct SpeciesIndexContext {
+    SpeciesIndexSystem* system{nullptr};
 };
 
 }  // namespace evolution::sim
-

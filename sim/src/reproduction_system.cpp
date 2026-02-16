@@ -1,16 +1,37 @@
 #include "evolution/sim/reproduction_system.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <span>
+#include <sstream>
 
 #include <entt/entt.hpp>
 #include <flatbuffers/flatbuffers.h>
 #include <spdlog/spdlog.h>
 
 #include "genome_generated.h"
+#include "evolution/genetics/trait_extraction.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
+
+namespace {
+
+std::string TraitsToJson(const std::array<double, 8>& traits) {
+    std::ostringstream oss;
+    oss << "[";
+    for (std::size_t i = 0; i < traits.size(); ++i) {
+        if (i > 0) {
+            oss << ",";
+        }
+        oss << traits[i];
+    }
+    oss << "]";
+    return oss.str();
+}
+
+}  // namespace
 
 ReproductionSystem::ReproductionSystem(genetics::GenomeStorage& storage,
                                        const genetics::ReproConfig& config,
@@ -22,6 +43,8 @@ ReproductionSystem::ReproductionSystem(genetics::GenomeStorage& storage,
 void ReproductionSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
     const double dt = context.fixed_dt();
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -68,17 +91,72 @@ void ReproductionSystem::tick(SimulationContext& context) {
                     auto mutated = genetics::mutate(std::move(*genome_obj), config_, seed);
                     const genetics::GenomeId child_id = storage_.insert(std::move(mutated));
 
-                    auto child_entity = registry.create();
-                    auto result = genetics::PhenotypeBuilder::build(child_id, registry, child_entity, storage_);
-                    if (result.ok) {
-                        auto& child_transform = registry.get<TransformComponent>(child_entity);
-                        child_transform.position = transform_a.position;
+                        auto child_entity = registry.create();
+                        auto result = genetics::PhenotypeBuilder::build(child_id, registry, child_entity, storage_);
+                        if (result.ok) {
+                            FeedingIntent intent{};
+                            intent.request_eat = true;
+                            intent.reach = 1.5;
+                            intent.rate = 8.0;
+                            registry.emplace_or_replace<FeedingIntent>(child_entity, intent);
+                            registry.emplace_or_replace<HerbivoreTag>(child_entity);
+
+                            auto& child_transform = registry.get<TransformComponent>(child_entity);
+                            child_transform.position = transform_a.position;
                         auto& child_repro = registry.get<ReproductionComponent>(child_entity);
                         child_repro.timer = child_repro.cooldown;
 
                         auto& parent_metabolism = view.get<MetabolismComponent>(parent_a);
                         parent_metabolism.energy -= repro_a.energy_threshold * 0.5;
                         repro_a.timer = repro_a.cooldown;
+
+                        if (telemetry != nullptr) {
+                            const bool force_capture = telemetry->should_capture(parent_a, 0, handle_a.id);
+
+                            std::ostringstream spawn_payload;
+                            spawn_payload << "{"
+                                         << "\"entity_id\":" << static_cast<std::uint32_t>(child_entity)
+                                         << ",\"genome_id\":" << child_id
+                                         << ",\"parent_a\":" << static_cast<std::uint32_t>(parent_a)
+                                         << ",\"asexual\":true"
+                                         << "}";
+
+                            TelemetryEvent spawn_event{
+                                TelemetryEventType::ENTITY_SPAWN,
+                                context.simulation_time(),
+                                spawn_payload.str()
+                            };
+                            telemetry->emit_event(spawn_event, force_capture);
+
+                            std::ostringstream lineage_payload;
+                            lineage_payload << "{"
+                                            << "\"child_genome_id\":" << child_id
+                                            << ",\"parent_a_genome_id\":" << handle_a.id
+                                            << ",\"asexual\":true"
+                                            << "}";
+
+                            TelemetryEvent lineage_event{
+                                TelemetryEventType::LINEAGE_LINK,
+                                context.simulation_time(),
+                                lineage_payload.str()
+                            };
+                            telemetry->emit_event(lineage_event, force_capture);
+
+                            if (const auto* genome_ptr = storage_.get(child_id)) {
+                                const auto traits = genetics::ExtractTraitVector(*genome_ptr);
+                                std::ostringstream traits_payload;
+                                traits_payload << "{"
+                                               << "\"genome_id\":" << child_id
+                                               << ",\"traits\":" << TraitsToJson(traits)
+                                               << "}";
+                                TelemetryEvent traits_event{
+                                    TelemetryEventType::GENOME_TRAITS,
+                                    context.simulation_time(),
+                                    traits_payload.str()
+                                };
+                                telemetry->emit_event(traits_event, force_capture);
+                            }
+                        }
                     }
                 }
             }
@@ -96,7 +174,11 @@ void ReproductionSystem::tick(SimulationContext& context) {
 
         for (const auto& candidate : candidates) {
             if (candidate.acceptance_prob > 0.1 && rng.next_unit() < candidate.acceptance_prob) {
-                if (AttemptReproduction(registry, parent_a, candidate.entity, rng.next_u64())) {
+                if (AttemptReproduction(registry,
+                                        parent_a,
+                                        candidate.entity,
+                                        rng.next_u64(),
+                                        context.simulation_time())) {
                     break;  // Successfully reproduced
                 }
             }
@@ -224,7 +306,8 @@ bool ReproductionSystem::AttemptReproduction(
     entt::registry& registry,
     entt::entity parent_a,
     entt::entity parent_b,
-    std::uint64_t seed) const {
+    std::uint64_t seed,
+    double sim_time) const {
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -266,6 +349,13 @@ bool ReproductionSystem::AttemptReproduction(
         return false;
     }
 
+    FeedingIntent intent{};
+    intent.request_eat = true;
+    intent.reach = 1.5;
+    intent.rate = 8.0;
+    registry.emplace_or_replace<FeedingIntent>(child_entity, intent);
+    registry.emplace_or_replace<HerbivoreTag>(child_entity);
+
     // Position near parents
     auto& child_transform = registry.get<TransformComponent>(child_entity);
     const Vec3 midpoint = (transform_a.position + view.get<TransformComponent>(parent_b).position) * 0.5;
@@ -296,8 +386,59 @@ bool ReproductionSystem::AttemptReproduction(
         fitness_b->offspring_count++;
     }
 
+    if (auto* telemetry_ctx = registry.ctx().find<TelemetryContext>()) {
+        TelemetrySystem* telemetry = telemetry_ctx->system;
+        if (telemetry != nullptr) {
+            const bool force_capture = telemetry->should_capture(parent_a, 0, handle_a.id)
+                                       || telemetry->should_capture(parent_b, 0, handle_b.id);
+
+            std::ostringstream spawn_payload;
+            spawn_payload << "{"
+                         << "\"entity_id\":" << static_cast<std::uint32_t>(child_entity)
+                         << ",\"genome_id\":" << child_id
+                         << ",\"parent_a\":" << static_cast<std::uint32_t>(parent_a)
+                         << ",\"parent_b\":" << static_cast<std::uint32_t>(parent_b)
+                         << "}";
+
+            TelemetryEvent spawn_event{
+                TelemetryEventType::ENTITY_SPAWN,
+                sim_time,
+                spawn_payload.str()
+            };
+            telemetry->emit_event(spawn_event, force_capture);
+
+            std::ostringstream lineage_payload;
+            lineage_payload << "{"
+                            << "\"child_genome_id\":" << child_id
+                            << ",\"parent_a_genome_id\":" << handle_a.id
+                            << ",\"parent_b_genome_id\":" << handle_b.id
+                            << "}";
+
+            TelemetryEvent lineage_event{
+                TelemetryEventType::LINEAGE_LINK,
+                sim_time,
+                lineage_payload.str()
+            };
+            telemetry->emit_event(lineage_event, force_capture);
+
+            if (const auto* genome_ptr = storage_.get(child_id)) {
+                const auto traits = genetics::ExtractTraitVector(*genome_ptr);
+                std::ostringstream traits_payload;
+                traits_payload << "{"
+                               << "\"genome_id\":" << child_id
+                               << ",\"traits\":" << TraitsToJson(traits)
+                               << "}";
+                TelemetryEvent traits_event{
+                    TelemetryEventType::GENOME_TRAITS,
+                    sim_time,
+                    traits_payload.str()
+                };
+                telemetry->emit_event(traits_event, force_capture);
+            }
+        }
+    }
+
     return true;
 }
 
 }  // namespace evolution::sim
-

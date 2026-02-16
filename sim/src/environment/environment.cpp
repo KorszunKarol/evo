@@ -82,10 +82,11 @@ constexpr double kEpsilon = 1e-5;
 
     const Vec3 dx{2.0 * delta, hx1 - hx0, 0.0};
     const Vec3 dz{0.0, hz1 - hz0, 2.0 * delta};
+    // Use dz x dx to keep normals upward-facing.
     Vec3 normal{
-        dx.y * dz.z - dx.z * dz.y,
-        dx.z * dz.x - dx.x * dz.z,
-        dx.x * dz.y - dx.y * dz.x,
+        dz.y * dx.z - dz.z * dx.y,
+        dz.z * dx.x - dz.x * dx.z,
+        dz.x * dx.y - dz.y * dx.x,
     };
     const double length_sq = normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
     if (length_sq <= kEpsilon) {
@@ -798,17 +799,15 @@ void EnvironmentStats::reset() noexcept {
 WaterZone classify_water_zone(const WaterMap& water_map, double x, double z) noexcept {
     const double depth = water_map.depth(x, z);
     const double shoreline_band = std::max(water_map.shore_band_max(), 0.1);
+    // Do not classify dry land as shoreline: this avoids eliminating terrestrial
+    // species when shore proximity is high (e.g., dense rivers / high water coverage).
+    if (depth <= 0.0) {
+        return WaterZone::Terrestrial;
+    }
     if (depth >= shoreline_band) {
         return WaterZone::Aquatic;
     }
-    if (depth > 0.0) {
-        return WaterZone::Shoreline;
-    }
-    const double shore_distance = water_map.shore_distance(x, z);
-    if (shore_distance <= shoreline_band) {
-        return WaterZone::Shoreline;
-    }
-    return WaterZone::Terrestrial;
+    return WaterZone::Shoreline;
 }
 
 bool species_allows_location(const PlantSpecies& species,
@@ -907,6 +906,4 @@ void update_environment_stats(entt::registry& registry) {
 }
 
 }  // namespace evolution::sim
-
-
 

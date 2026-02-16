@@ -1,6 +1,8 @@
 #include "evolution/sim/scenario.h"
 
+#include <filesystem>
 #include <random>
+#include <sstream>
 #include <string>
 
 #include <spdlog/spdlog.h>
@@ -19,6 +21,8 @@
 #include "evolution/sim/reproduction_system.h"
 #include "evolution/sim/species_index_system.h"
 #include "evolution/sim/stats_system.h"
+#include "evolution/sim/telemetry_system.h"
+#include "evolution/genetics/trait_extraction.h"
 
 namespace evolution::sim {
 
@@ -65,6 +69,45 @@ void seed_initial_population(entt::registry& registry,
 
         const std::string name = "creature_" + std::to_string(genome_id);
         registry.emplace_or_replace<NameComponent>(entity, NameComponent{.value = name});
+
+        if (auto* telemetry_ctx = registry.ctx().find<TelemetryContext>()) {
+            TelemetrySystem* telemetry = telemetry_ctx->system;
+            if (telemetry != nullptr) {
+                const bool force_capture = telemetry->should_capture(entity, 0, genome_id);
+
+                std::ostringstream spawn_payload;
+                spawn_payload << "{"
+                             << "\"entity_id\":" << static_cast<std::uint32_t>(entity)
+                             << ",\"genome_id\":" << genome_id
+                             << ",\"initial\":true"
+                             << "}";
+
+                TelemetryEvent spawn_event{
+                    TelemetryEventType::ENTITY_SPAWN,
+                    0.0,
+                    spawn_payload.str()
+                };
+                telemetry->emit_event(spawn_event, force_capture);
+
+                if (const auto* genome_ptr = storage.get(genome_id)) {
+                    const auto traits = genetics::ExtractTraitVector(*genome_ptr);
+                    std::ostringstream traits_payload;
+                    traits_payload << "{"
+                                   << "\"genome_id\":" << genome_id
+                                   << ",\"traits\":["
+                                   << traits[0] << "," << traits[1] << "," << traits[2] << "," << traits[3]
+                                   << "," << traits[4] << "," << traits[5] << "," << traits[6] << "," << traits[7]
+                                   << "]"
+                                   << "}";
+                    TelemetryEvent traits_event{
+                        TelemetryEventType::GENOME_TRAITS,
+                        0.0,
+                        traits_payload.str()
+                    };
+                    telemetry->emit_event(traits_event, force_capture);
+                }
+            }
+        }
     }
 
     spdlog::info("Seeded {} initial genomes", scenario.initial_population);
@@ -105,8 +148,34 @@ void setup_scenario(SimulationApp& app,
                                                                     scenario.reproduction,
                                                                     scenario.reproduction_seed));
     if (scenario.enable_species_index) {
-        app.scheduler().add_system(std::make_unique<SpeciesIndexSystem>(storage,
-                                                                        scenario.reproduction));
+        auto species_system = std::make_unique<SpeciesIndexSystem>(storage,
+                                                                    scenario.reproduction);
+        auto& ctx = app.registry().ctx();
+        if (ctx.contains<SpeciesIndexContext>()) {
+            ctx.erase<SpeciesIndexContext>();
+        }
+        ctx.emplace<SpeciesIndexContext>(SpeciesIndexContext{species_system.get()});
+        app.scheduler().add_system(std::move(species_system));
+    }
+    if (scenario.enable_telemetry) {
+        TelemetryTargeting targeting{};
+        targeting.sampling_rate = scenario.telemetry_sampling_rate;
+
+        RollupConfig rollup_config{};
+        rollup_config.interval_seconds = scenario.telemetry_rollup_interval;
+        rollup_config.buffer_size = scenario.telemetry_buffer_size;
+
+        auto telemetry_system = std::make_unique<TelemetrySystem>(
+            std::filesystem::path{scenario.telemetry_output_dir},
+            scenario.telemetry_run_id,
+            targeting,
+            rollup_config);
+        auto& ctx = app.registry().ctx();
+        if (ctx.contains<TelemetryContext>()) {
+            ctx.erase<TelemetryContext>();
+        }
+        ctx.emplace<TelemetryContext>(TelemetryContext{telemetry_system.get()});
+        app.scheduler().add_system(std::move(telemetry_system));
     }
     app.scheduler().add_system(std::make_unique<PhysicsSystem>(std::move(backend)));
     app.scheduler().add_system(std::make_unique<StatsSystem>(1.0));
@@ -115,5 +184,3 @@ void setup_scenario(SimulationApp& app,
 }
 
 }  // namespace evolution::sim
-
-

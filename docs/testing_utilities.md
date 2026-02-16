@@ -288,3 +288,13 @@ error: request for member 'state_hash' in 'expected', which is of non-class type
 3. **Species index state**: Include species clustering in hash
 4. **Full grid hashing**: Hash complete SoilGrid and BiomeMap state instead of just aggregated values
 5. **Performance benchmarks**: Add snapshot creation time measurements to ensure <5ms for 10K entities
+
+## Property-Based Tests
+
+Property-based invariants live in `tests/sim/test_property_based.cpp` and can be run locally with:
+
+```bash
+ctest --test-dir build -R "PropertyBased" --output-on-failure
+```
+
+The suite validates determinism and safety invariants across 100 randomized configurations per property.

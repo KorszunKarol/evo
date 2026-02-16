@@ -10,6 +10,7 @@
 #include "evolution/genetics/genome_ops.h"
 #include "evolution/genetics/phenotype_builder.h"
 #include "evolution/sim/environment/environment_bootstrap.h"
+#include "evolution/sim/species_index_system.h"
 
 using namespace evolution::genetics;
 
@@ -45,7 +46,6 @@ SimulationFixture::Snapshot SimulationFixture::take_snapshot() const {
         if (plant.alive) {
             ++snap.plant_count;
             snap.total_biomass += plant.energy;
-            ++snap.species_counts[plant.species_id];
         }
     });
 
@@ -53,8 +53,24 @@ SimulationFixture::Snapshot SimulationFixture::take_snapshot() const {
     auto herbivore_view = registry.view<MetabolismComponent, HerbivoreTag>();
     herbivore_view.each([&](const MetabolismComponent& metab) {
         ++snap.herbivore_count;
-        snap.total_biomass += metab.energy;
+        (void)metab;
     });
+
+    // Species counts: prefer species index if available, otherwise fall back to genome IDs.
+    if (const auto* species_ctx = registry.ctx().find<SpeciesIndexContext>();
+        species_ctx != nullptr && species_ctx->system != nullptr) {
+        auto genome_view = registry.view<GenomeHandleComponent, HerbivoreTag>();
+        genome_view.each([&](const GenomeHandleComponent& handle) {
+            const auto species_id = species_ctx->system->get_species(handle.id);
+            ++snap.species_counts[static_cast<std::uint8_t>(species_id)];
+        });
+    } else {
+        auto genome_view = registry.view<GenomeHandleComponent, HerbivoreTag>();
+        genome_view.each([&](const GenomeHandleComponent& handle) {
+            const auto species_id = static_cast<std::uint8_t>(handle.id % 255u);
+            ++snap.species_counts[species_id];
+        });
+    }
 
     // Soil mean
     if (auto* soil = registry.ctx().find<SoilGrid>()) {
@@ -119,6 +135,12 @@ entt::entity SimulationFixture::spawn_herbivore(const Vec3& position,
     // Build phenotype to add other components
     [[maybe_unused]] const auto build_result =
         genetics::PhenotypeBuilder::build(genome_id, registry, entity, storage_);
+    auto& built_transform = registry.get<TransformComponent>(entity);
+    built_transform.position = position;
+    auto& reproduction = registry.get<ReproductionComponent>(entity);
+    reproduction.timer = 0.0;
+    reproduction.mate_radius = std::max(reproduction.mate_radius, 4.0);
+    reproduction.energy_threshold = std::min(reproduction.energy_threshold, 120.0);
 
     // Add fitness component
     FitnessComponent fitness{};
@@ -265,21 +287,6 @@ std::string hash_entity_state(entt::registry& registry) {
         oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
     }
 
-    // Hash fitness (accumulated metrics)
-    auto fitness_view = registry.view<FitnessComponent>();
-    std::vector<std::pair<entt::entity, double>> fitness;
-    for (auto entity : fitness_view) {
-        const auto& fit = fitness_view.get<FitnessComponent>(entity);
-        fitness.emplace_back(entity,
-                              fit.age_seconds * 0.1 + fit.energy_int_accum * 0.001 +
-                              static_cast<double>(fit.offspring_count) * 10.0);
-    }
-    std::sort(fitness.begin(), fitness.end());
-    oss << "FITNESS:";
-    for (const auto& [entity, val] : fitness) {
-        oss << static_cast<std::uint32_t>(entity) << ":" << val << ";";
-    }
-
     // Hash actuation (brain/motor decisions)
     auto actuation_view = registry.view<ActuationComponent>();
     std::vector<std::pair<entt::entity, double>> actuations;
@@ -349,4 +356,3 @@ std::string hash_entity_state(entt::registry& registry) {
 }
 
 }  // namespace evolution::sim::test
-

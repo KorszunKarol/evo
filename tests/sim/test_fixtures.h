@@ -48,7 +48,7 @@ struct SnapshotDiff {
  * @brief Test fixture providing deterministic simulation setup.
  */
 class SimulationFixture {
-protected:
+public:
     void SetUp();
     void TearDown();
 
@@ -127,4 +127,3 @@ private:
 // TODO: Implement after resolving macro compilation issue
 
 }  // namespace evolution::sim::test
-

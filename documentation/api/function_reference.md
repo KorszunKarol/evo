@@ -1370,4 +1370,137 @@ void tick(SimulationContext& context) override;
 **Side Effects**: Updates soil nutrient diffusion and regeneration
 
 **Service Requirements**: `SoilGrid` in `registry.ctx()`
+---
 
+## TelemetrySystem
+
+### Construction
+
+```cpp
+explicit TelemetrySystem(const std::filesystem::path& output_dir,
+                         std::string_view run_id = "default",
+                         const TelemetryTargeting& targeting = {},
+                         const RollupConfig& rollup_config = {});
+```
+
+**Parameters**:
+- `output_dir`: `std::filesystem::path` - Output root for telemetry files
+- `run_id`: `std::string_view` - Identifier for the run (used in output records)
+- `targeting`: `TelemetryTargeting` - Filtering and sampling configuration
+- `rollup_config`: `RollupConfig` - Rollup cadence and buffer configuration
+
+**Returns**: `TelemetrySystem` instance
+
+**Exceptions**: `std::filesystem::filesystem_error` if output directory cannot be created
+
+**Complexity**: O(1)
+
+---
+
+### tick()
+
+```cpp
+void tick(SimulationContext& context);
+```
+
+**Parameters**:
+- `context`: `SimulationContext&` - Registry access and timing metadata
+
+**Returns**: `void`
+
+**Exceptions**: None (errors are logged)
+
+**Complexity**: O(S + E) where S = species count, E = entity count
+
+**Side Effects**:
+- Emits rollup snapshots on cadence
+- Emits movement metrics
+- Flushes buffered events when buffer size threshold is reached
+
+---
+
+### emit_event()
+
+```cpp
+bool emit_event(const TelemetryEvent& event, bool force_capture = false);
+```
+
+**Parameters**:
+- `event`: `TelemetryEvent` - Event record to buffer
+- `force_capture`: `bool` - If true, bypass sampling/targeting filters
+
+**Returns**: `bool` - True when event is captured
+
+**Exceptions**: None
+
+**Complexity**: O(1) amortized
+
+---
+
+### flush()
+
+```cpp
+void flush();
+```
+
+**Parameters**: None
+
+**Returns**: `void`
+
+**Exceptions**: `std::filesystem::filesystem_error` on write failure
+
+**Complexity**: O(N) where N = buffered events
+
+---
+
+### should_capture()
+
+```cpp
+[[nodiscard]] bool should_capture(entt::entity entity,
+                                  SpeciesId species_id = 0,
+                                  genetics::GenomeId genome_id = 0) const noexcept;
+```
+
+**Parameters**:
+- `entity`: `entt::entity` - Entity identifier
+- `species_id`: `SpeciesId` - Species identifier (optional)
+- `genome_id`: `genetics::GenomeId` - Genome identifier (optional)
+
+**Returns**: `bool` - True when entity matches targeting rules
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
+### should_sample()
+
+```cpp
+[[nodiscard]] bool should_sample() const noexcept;
+```
+
+**Parameters**: None
+
+**Returns**: `bool` - True when non-targeted sampling should occur
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
+### set_targeting()
+
+```cpp
+void set_targeting(const TelemetryTargeting& targeting) noexcept;
+```
+
+**Parameters**:
+- `targeting`: `TelemetryTargeting` - New targeting configuration
+
+**Returns**: `void`
+
+**Exceptions**: None
+
+**Complexity**: O(1)

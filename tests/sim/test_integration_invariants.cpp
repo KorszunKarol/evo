@@ -1,7 +1,10 @@
 #include <entt/entt.hpp>
+#include <cmath>
+#include <limits>
 #include "test_fixtures.h"
 #include <gtest/gtest.h>
 
+using namespace evolution::sim;
 using namespace evolution::sim::test;
 
 class IntegrationInvariantsTest : public ::testing::Test {
@@ -172,10 +175,11 @@ TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
     bool found_offspring = false;
     bool found_invalid_genome = false;
     
-    auto metab_view = registry.view<MetabolismComponent, GenomeHandleComponent>();
-    metab_view.each([&](const MetabolismComponent& metab, const GenomeHandleComponent& genome) {
-        if (metab.age_seconds < 10.0 && genome.id != 0) {
-            // Likely offspring (young, different from parents)
+    auto metab_view = registry.view<MetabolismComponent, GenomeHandleComponent, FitnessComponent>();
+    metab_view.each([&](const MetabolismComponent& metab,
+                        const GenomeHandleComponent& genome,
+                        const FitnessComponent& fitness) {
+        if (fitness.age_seconds < 10.0 && genome.id != 0) {
             found_offspring = true;
             if (genome.id == 0) {
                 found_invalid_genome = true;
@@ -190,6 +194,9 @@ TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
 // 6. Species Stability
 TEST_F(IntegrationInvariantsTest, SpeciesIdsStable) {
     fixture.SetUp();
+
+    auto config = create_test_env_config(2025);
+    seed_initial_plants(fixture.app().registry(), config);
     
     // Create entities
     auto genome = fixture.create_test_genome(11000);
