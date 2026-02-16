@@ -142,7 +142,41 @@ void run_for_steps(std::size_t steps);
 
 ---
 
+### tick_count()
+
+```cpp
+[[nodiscard]] std::size_t tick_count() const noexcept;
+```
+
+**Parameters**: None
+
+**Returns**: `std::size_t` - Number of completed simulation ticks
+
+**Exceptions**: None
+
+**Complexity**: O(1)
+
+---
+
 ## Scheduler
+
+### SystemStage
+
+```cpp
+enum class SystemStage : std::size_t {
+    Bootstrap,
+    PrePhysics,
+    Ecology,
+    Physics,
+    Metrics,
+    PostTick,
+    Count
+};
+```
+
+**Description**: High-level execution buckets; systems run in stage order, preserving insertion order within each stage.
+
+---
 
 ### add_system()
 
@@ -162,6 +196,28 @@ void add_system(std::unique_ptr<ISystem> system);
 **Complexity**: O(1) amortized
 
 **Side Effects**: Adds system to execution list (preserves order)
+
+**Thread Safety**: Not thread-safe (setup phase only)
+
+---
+
+### add_system() (staged)
+
+```cpp
+void add_system(SystemStage stage, std::unique_ptr<ISystem> system);
+```
+
+**Parameters**:
+- `stage`: `SystemStage` - Target execution stage
+- `system`: `std::unique_ptr<ISystem>` - Ownership-transferring pointer
+
+**Returns**: `void`
+
+**Exceptions**: May throw `std::bad_alloc` if stage vector reallocation fails
+
+**Complexity**: O(1) amortized
+
+**Side Effects**: Adds system to specified stage queue
 
 **Thread Safety**: Not thread-safe (setup phase only)
 

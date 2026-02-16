@@ -29,8 +29,17 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads); do
 done
 echo
 
+if [[ -x "$ROOT_DIR/tools/branch_audit.sh" ]]; then
+  echo "Tip: run ./tools/branch_audit.sh master for detailed branch cleanup guidance."
+fi
+
 echo "== Stashes =="
 git stash list || true
+echo
+
+if [[ -x "$ROOT_DIR/tools/stash_audit.sh" ]]; then
+  echo "Tip: run ./tools/stash_audit.sh for stash contents and salvage recommendations."
+fi
 echo
 
 echo "== Build + Tests =="
