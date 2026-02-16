@@ -9,6 +9,7 @@
 - [Architecture Overview](./architecture/overview.md) - High-level system design
 - [Recovery Baseline (2026-02-16)](./architecture/recovery_baseline.md) - Stabilization checkpoint and resolved failures
 - [Module Ownership](./architecture/module_ownership.md) - Ownership boundaries and review escalation
+- [Branching Playbook](./architecture/branching_playbook.md) - Lightweight protected-branch workflow without CI gates
 - [Module Documentation](./modules/) - Detailed module specifications
 - [API Reference](./api/) - Complete function signatures
 - [Data Contracts](./data-contracts/) - Inter-module communication
