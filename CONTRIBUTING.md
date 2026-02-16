@@ -14,10 +14,10 @@
 - Do not mix feature work with cleanup-only changes.
 - Do not commit generated runtime artifacts (`output/`, `*.tracy`, local logs).
 
-## Required Validation
-- Build must pass:
+## Local Validation (Recommended)
+- Build:
   - `cmake --build build -j$(( $(nproc) / 2 ))`
-- Tests must pass:
+- Tests:
   - `ctest --test-dir build --output-on-failure`
 
 ## Local Workflow
@@ -29,5 +29,5 @@
 
 ## Safety Rules
 - Do not force-push shared branches.
-- Do not merge with failing CI.
+- Prefer merge only after local build/tests pass.
 - Resolve stashes promptly: either convert into a branch+PR or drop them.

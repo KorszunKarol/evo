@@ -29,8 +29,8 @@ This file defines ownership boundaries for stabilization and modularization work
 - Owner role: Quality maintainer.
 - Change policy: Failing tests block merge to integration branch.
 
-### Build and workflow (`CMakeLists.txt`, `.github/workflows/*`, `tools/*`)
-- Scope: Build graph, CI gates, project health tooling.
+### Build and workflow (`CMakeLists.txt`, `tools/*`)
+- Scope: Build graph and project health tooling.
 - Owner role: Build/release maintainer.
 - Change policy: Build + full `ctest` gate required for merge.
 
