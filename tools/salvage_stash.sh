@@ -21,7 +21,7 @@ mkdir -p "$tmp_root"
 
 while IFS= read -r line; do
   stash_ref="${line%%:*}"
-  safe_name="${stash_ref//[@{}]/_}"
+  safe_name="$(printf '%s' "$stash_ref" | sed -E 's/[^a-zA-Z0-9._-]+/_/g')"
   branch_name="salvage/${safe_name}"
   wt_dir="$tmp_root/$safe_name"
 
