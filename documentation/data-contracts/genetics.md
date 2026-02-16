@@ -251,21 +251,88 @@ ActuationComponent reset to defaults
 - **Readers**: SpeciesIndexSystem
 - **Read Fields**: All genomes in storage (via `storage.ids()`)
 - **Read Frequency**: Every generation (or on-demand)
+- **Thread Safety**: Not thread-safe
 
 **Write Contract**:
 - **Writers**: SpeciesIndexSystem
-- **Write Fields**: Species assignments (per-genome `SpeciesId`)
+- **Write Fields**: Species assignments (internal `species_map_` mapping `GenomeId` → `SpeciesId`)
 - **Write Frequency**: When clustering updates
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+using SpeciesId = std::uint32_t;
+
+// Species lookup mapping (internal)
+std::unordered_map<GenomeId, SpeciesId> species_map_;
+
+// Query API
+SpeciesId species_id = system.get_species(genome_id);
+```
 
 **Clustering Contract**:
 1. **Distance Computation**: `GenomeOps::compatibility_distance(a, b)` for all pairs
-2. **Clustering**: Threshold-based or k-means assignment
-3. **Assignment**: Each genome assigned to `SpeciesId`
-4. **Telemetry**: Species count, mean δ, mean brain edges logged
+2. **Dynamic Threshold**: Auto-adjusts to maintain `target_species_count`
+3. **Assignment**: Each genome assigned to exactly one `SpeciesId`
+4. **Telemetry**: spdlog info logs species count, threshold, min/max sizes; telemetry emits SPECIES_CREATED and SPECIES_EXTINCT events when TelemetryContext exists
+
+**Threshold Adjustment Contract**:
+- **Increase Threshold**: If `current_species_count > target_species_count`
+- **Decrease Threshold**: If `current_species_count < target_species_count`
+- **Initial Value**: Configurable via `initial_threshold` parameter
 
 **Guarantees**:
 - Each genome assigned to exactly one species
 - Species assignments deterministic (same genomes → same species)
+- Species ID `0` reserved for "not found" or "unassigned"
+- Species count updated after each `tick()` call
+- Threshold never drops below a small positive value
+
+### ReproductionSystem ↔ SpeciesIndexContext
+
+**Read Contract**:
+- **Readers**: ReproductionSystem (optional, if `SpeciesIndexContext` available)
+- **Read Fields**: `SpeciesIndexContext.system` → SpeciesIndexSystem
+- **Read Method**: `system->get_species(genome_id)` → `SpeciesId`
+- **Read Frequency**: When evaluating candidate mates for reproduction
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: None (ReproductionSystem only reads species index)
+
+**Mate Filtering Contract** (Optional):
+1. **Context Availability**: `SpeciesIndexContext` accessible via `SimulationContext` only when `scenario.enable_species_index == true`
+2. **Same-Species Preference**: When evaluating candidates, `SpeciesIndexContext::get_species()` can filter mates by species
+3. **Cross-Species Reproduction**: If enabled via config, reproduction can occur across species (filtering optional)
+4. **Fallback**: If species index not available, reproduction proceeds without species filtering
+
+**Data Flow**:
+```
+ReproductionSystem::tick()
+    ↓
+FindCandidates(seeker, radius)
+    ↓ (if SpeciesIndexContext available)
+For each candidate:
+    species_a = species_ctx.system->get_species(seeker_genome_id)
+    species_b = species_ctx.system->get_species(candidate_genome_id)
+    ↓
+    Filter candidates (optional): keep if species_a == species_b
+    ↓
+EvaluatePreference(seeker_genome, candidate_genome)
+    ↓
+AttemptReproduction(parent_a, parent_b, seed)
+```
+
+**Guarantees**:
+- Species index lookup is O(1) average
+- Species-based filtering is optional and configurable
+- If species index is unavailable, reproduction proceeds without error
+- No race conditions: SpeciesIndexSystem does not mutate during reproduction tick
+
+**Scenario Dependency**:
+- SpeciesIndexContext availability depends on `scenario.enable_species_index`
+- When disabled: ReproductionSystem ignores species filtering
+- When enabled: ReproductionSystem can query species ID for mate preferences
 
 ---
 
@@ -317,4 +384,6 @@ ActuationComponent reset to defaults
 - [Phenotype Module](../modules/phenotype.md) - Building ECS entities
 - [Brain Module](../modules/brain.md) - MLP and NEAT inference
 - [Core Simulation Module](../modules/core_simulation.md) - System execution order
+- [Reproduction Module](../modules/reproduction.md) - ReproductionSystem interface and behavior
+- [Species Index Module](../modules/species_index.md) - SpeciesIndexSystem clustering logic
 

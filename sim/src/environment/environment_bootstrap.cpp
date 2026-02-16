@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/environment/soil_volume.h"
 
 namespace evolution::sim {
 
@@ -85,12 +86,27 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
         ctx.emplace<WaterMap>(water_config, terrain);
     }
 
-    // Initialize soil grid
+    // Initialize soil grid (2D legacy)
     if (!ctx.contains<SoilGrid>()) {
         ctx.emplace<SoilGrid>(config.soil);
     } else {
         ctx.erase<SoilGrid>();
         ctx.emplace<SoilGrid>(config.soil);
+    }
+
+    // Initialize soil volume (3D)
+    SoilVolumeConfig vol_config;
+    vol_config.width = config.soil.width_cells;
+    vol_config.depth = config.soil.height_cells; // In config 'height_cells' is Z
+    vol_config.height = 16; // Default vertical depth for now
+    vol_config.voxel_size = config.soil.cell_size;
+    vol_config.diffusion_rate = config.soil.diffusion_rate;
+    
+    if (!ctx.contains<SoilVolume>()) {
+        ctx.emplace<SoilVolume>(vol_config);
+    } else {
+        ctx.erase<SoilVolume>();
+        ctx.emplace<SoilVolume>(vol_config);
     }
 
     // Initialize plant spatial index
@@ -232,5 +248,3 @@ void seed_initial_plants(entt::registry& registry, const EnvironmentConfig& conf
 }
 
 }  // namespace evolution::sim
-
-

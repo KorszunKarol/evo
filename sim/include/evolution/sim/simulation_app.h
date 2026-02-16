@@ -4,6 +4,7 @@
 
 #include <entt/entt.hpp>
 
+#include "evolution/sim/runtime_contracts.h"
 #include "evolution/sim/scheduler.h"
 
 namespace evolution::sim {
@@ -22,7 +23,7 @@ struct SimulationConfig {
 /// @details Owns the ECS registry and orchestrates tick progression for testing and headless execution.
 /// @threadsafe Not thread-safe; caller must guarantee serialized tick invocation.
 ///
-class SimulationApp {
+class SimulationApp : public IWorldTime {
 public:
     ///
     /// @brief Constructs a simulation with the provided configuration.
@@ -71,7 +72,7 @@ public:
     /// @return double Elapsed time in seconds.
     /// @notthreadsafe Value may change concurrently if ticks run on another thread.
     ///
-    [[nodiscard]] double simulation_time() const { return simulation_time_; }
+    [[nodiscard]] double simulation_time() const noexcept override { return simulation_time_; }
 
     ///
     /// @brief Retrieves the configured fixed timestep duration.
@@ -79,7 +80,9 @@ public:
     /// @return double Time per tick in seconds.
     /// @threadsafe Read-only constant value.
     ///
-    [[nodiscard]] double fixed_dt() const { return fixed_dt_; }
+    [[nodiscard]] double fixed_dt() const noexcept override { return fixed_dt_; }
+
+    [[nodiscard]] std::size_t tick_count() const noexcept override { return tick_count_; }
 
 private:
     /// @brief Hook executed at the beginning of each tick for logging/metrics.

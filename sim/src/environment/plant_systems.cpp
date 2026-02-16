@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/environment/soil_volume.h"
 
 namespace evolution::sim {
 
@@ -17,10 +18,21 @@ PlantGrowthSystem::PlantGrowthSystem(double nutrient_to_energy) noexcept
 
 void PlantGrowthSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
-    if (!registry.ctx().contains<SoilGrid>()) {
+    
+    SoilVolume* volume = nullptr;
+    if (registry.ctx().contains<SoilVolume>()) {
+        volume = &registry.ctx().get<SoilVolume>();
+    }
+
+    SoilGrid* soil_grid = nullptr;
+    if (registry.ctx().contains<SoilGrid>()) {
+        soil_grid = &registry.ctx().get<SoilGrid>();
+    }
+
+    if (volume == nullptr && soil_grid == nullptr) {
         return;
     }
-    auto& soil = registry.ctx().get<SoilGrid>();
+
     const double dt = context.fixed_dt();
 
     auto view = registry.view<TransformComponent, PlantComponent>();
@@ -35,9 +47,16 @@ void PlantGrowthSystem::tick(SimulationContext& context) {
 
         plant.seed_timer += dt;
 
-        const float soil_value = soil.sample(transform.position.x, transform.position.z);
+        double soil_value = 0.0;
+        if (volume) {
+            // Use nitrogen as primary nutrient
+            soil_value = static_cast<double>(volume->sample(transform.position).nitrogen);
+        } else {
+            soil_value = static_cast<double>(soil_grid->sample(transform.position.x, transform.position.z));
+        }
+
         const double uptake_capacity = plant.growth_rate * dt * nutrient_to_energy_;
-        const double uptake = std::min(static_cast<double>(soil_value), uptake_capacity);
+        const double uptake = std::min(soil_value, uptake_capacity);
 
         if (uptake > 0.0) {
             // Clamp to max energy while still reducing soil nutrients.
@@ -45,11 +64,26 @@ void PlantGrowthSystem::tick(SimulationContext& context) {
             const double applied = new_energy - plant.energy;
             plant.energy = new_energy;
 
-            const double cell_size = soil.cell_size();
-            const int ix = std::clamp(static_cast<int>(transform.position.x / cell_size), 0, soil.width() - 1);
-            const int iz = std::clamp(static_cast<int>(transform.position.z / cell_size), 0, soil.height() - 1);
-            auto& cell = soil.at(ix, iz);
-            cell = std::max(0.0F, cell - static_cast<float>(applied));
+            if (volume) {
+                // Discrete update
+                int ix = static_cast<int>(transform.position.x / volume->voxel_size());
+                int iy = static_cast<int>(transform.position.y / volume->voxel_size());
+                int iz = static_cast<int>(transform.position.z / volume->voxel_size());
+                
+                ix = std::clamp(ix, 0, volume->width() - 1);
+                iy = std::clamp(iy, 0, volume->height() - 1);
+                iz = std::clamp(iz, 0, volume->depth() - 1);
+                
+                auto& voxel = volume->at(ix, iy, iz);
+                const double current_n = static_cast<double>(voxel.nitrogen);
+                voxel.nitrogen = static_cast<float>(std::max(0.0, current_n - applied));
+            } else {
+                const double cell_size = soil_grid->cell_size();
+                const int ix = std::clamp(static_cast<int>(transform.position.x / cell_size), 0, soil_grid->width() - 1);
+                const int iz = std::clamp(static_cast<int>(transform.position.z / cell_size), 0, soil_grid->height() - 1);
+                auto& cell = soil_grid->at(ix, iz);
+                cell = std::max(0.0F, cell - static_cast<float>(applied));
+            }
         }
 
         if (plant.energy <= 0.0) {
@@ -71,11 +105,21 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
     if (terrain_ptr == nullptr) {
         return;
     }
-    auto* soil_ptr = registry.ctx().find<SoilGrid>();
-    if (soil_ptr == nullptr) {
+    
+    SoilVolume* volume = nullptr;
+    if (registry.ctx().contains<SoilVolume>()) {
+        volume = &registry.ctx().get<SoilVolume>();
+    }
+
+    SoilGrid* soil_grid = nullptr;
+    if (registry.ctx().contains<SoilGrid>()) {
+        soil_grid = &registry.ctx().get<SoilGrid>();
+    }
+
+    if (volume == nullptr && soil_grid == nullptr) {
         return;
     }
-    auto& soil = *soil_ptr;
+
     const auto* biome_map = registry.ctx().find<BiomeMap>();
     const auto* water_map = registry.ctx().find<WaterMap>();
     const auto* species_registry = registry.ctx().find<PlantSpeciesRegistry>();
@@ -90,6 +134,15 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
     std::uniform_real_distribution<double> radius_dist(0.0, 1.0);
     std::uniform_real_distribution<double> energy_dist(3.0, 8.0);
     std::uniform_real_distribution<double> probability(0.0, 1.0);
+
+    // Global Plant Cap Check
+    const auto active_plants = registry.view<PlantComponent>().size();
+    if (active_plants >= 20000) {
+        update_environment_stats(registry);
+        return;
+    }
+
+    const auto* spatial_index = registry.ctx().find<PlantSpatialIndex>();
 
     auto view = registry.view<TransformComponent, PlantComponent, PlantSeedParams>();
 
@@ -109,6 +162,11 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         }
 
         plant.seed_timer = 0.0;
+        
+        // Probabilistic early exit to reduce checking cost at high counts
+        if (active_plants > 10000 && probability(rng_) > 0.1) {
+             continue; // Throttle seeding as we approach cap
+        }
 
         const double angle = angle_dist(rng_);
         const double radius = std::sqrt(radius_dist(rng_)) * params.seed_radius;
@@ -117,9 +175,23 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
 
         const double target_x = transform.position.x + offset_x;
         const double target_z = transform.position.z + offset_z;
-
+        
+        // ... (Bounds checks remain the same) ...
         const double world_x = std::clamp(target_x, 0.0, static_cast<double>(terrain.width() - 1) * terrain.cell_size());
         const double world_z = std::clamp(target_z, 0.0, static_cast<double>(terrain.height_cells() - 1) * terrain.cell_size());
+        
+        // Density Check using Spatial Index
+        if (spatial_index != nullptr) {
+            bool too_crowded = false;
+            // Check radius slightly smaller than plant radius to allow some packing but not overlap
+            const double check_radius = plant.radius * 0.8; 
+            spatial_index->for_each_in_radius(registry, Vec3{world_x, 0.0, world_z}, check_radius, 
+                [&too_crowded](entt::entity, double) {
+                    too_crowded = true;
+                });
+            if (too_crowded) continue;
+        }
+
         const Vec3 normal = terrain.normal(world_x, world_z);
         if (normal.y < 0.45) {
             continue;
@@ -128,7 +200,14 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
             continue;
         }
 
-        const float soil_sample = soil.sample(world_x, world_z);
+        float soil_sample = 0.0F;
+        if (volume) {
+            // Assume surface sample or slightly below
+            soil_sample = volume->sample(Vec3{world_x, transform.position.y, world_z}).nitrogen;
+        } else {
+            soil_sample = soil_grid->sample(world_x, world_z);
+        }
+
         if (soil_sample < 0.5F) {
             continue;
         }
@@ -212,5 +291,3 @@ void PlantSpatialSystem::tick(SimulationContext& context) {
 }
 
 }  // namespace evolution::sim
-
-

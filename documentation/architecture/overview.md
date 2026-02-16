@@ -58,7 +58,11 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `Scheduler`: System execution manager
    - `SimulationContext`: Tick-scoped state access
 
-2. **sim/components** - ECS component definitions
+2. **sim/telemetry** - Observability and analytics output
+   - `TelemetrySystem`: Event and rollup telemetry
+   - `TelemetryContext`: Registry access for emitters
+
+3. **sim/components** - ECS component definitions
    - `TransformComponent`: Spatial positioning
    - `KinematicsComponent`: Velocity and forces
    - `MetabolismComponent`: Energy management
@@ -66,29 +70,58 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `NameComponent`: Debug labeling
    - `PlantComponent`: Plant energy and lifecycle
    - `PlantSeedParams`: Plant reproduction parameters
-   - `FeedingIntent`: Herbivore feeding behavior
+   - `FeedingIntent`: Feeding behavior
+   - `DietComponent`: Herbivore/carnivore routing
    - `HerbivoreTag`: Herbivore marker
+   - `CarnivoreTag`: Carnivore marker
+   - `CombatComponent`: Predator cooldown and targeting metadata
    - `BrainComponent`: Neural controller metadata
    - `ActuationComponent`: Brain output commands
    - `ReproductionComponent`: Reproduction cooldown and policy
 
-3. **sim/physics** - Physics backends and pipeline
+4. **sim/physics** - Physics backends and pipeline
    - `physics_system.h/.cpp`: System façade delegating to backends
    - `physics/backend.h`: Backend interface
    - `physics/simple_backend.*`: Deterministic CPU backend
    - `physics/broad_phase|narrow_phase|solver.*`: Collision pipeline helpers
    - **Terrain Integration**: Heightfield collision via `Terrain` service
 
-4. **sim/environment** - Living world systems
-   - `environment/environment.h`: Terrain and soil grid definitions
+5. **sim/environment** - Living world systems
+   - `environment/environment.h`: Terrain and soil grid/volume definitions
    - `environment/environment_bootstrap.*`: One-time terrain/soil initialization
    - `environment/soil_system.*`: Nutrient diffusion and regeneration
    - `environment/plant_systems.*`: Plant growth, seeding, cleanup
-   - `environment/feeding_system.*`: Energy transfer from plants to herbivores
-   - **Services**: `Terrain` and `SoilGrid` stored in registry context
+   - `environment/feeding_system.*`: Energy transfer from plants or prey
+   - **Services**: `Terrain`, `SoilGrid`, and `SoilVolume` stored in registry context
 
-5. **sim/math** - Mathematical utilities
+6. **sim/math** - Mathematical utilities
    - `Vec3`: 3D vector operations
+
+7. **sim/reproduction_system** - Mate selection and reproduction
+   - `ReproductionSystem`: Preference-driven mate selection with crossover/mutation
+   - Uses PreferenceNet when available, falls back to energy/cooldown rules
+   - Creates offspring genomes and builds phenotype entities
+
+8. **sim/species_index_system** - Species clustering and indexing
+   - `SpeciesIndexSystem`: Clusters genomes into species using compatibility distance
+   - Maintains dynamic threshold to keep species count in target range
+   - Provides species ID lookup for genomes
+
+9. **sim/scenario** - Simulation configuration and initialization
+   - `SimulationScenario`: High-level experiment configuration
+   - `setup_scenario()`: Configures simulation app with systems and services
+   - `seed_initial_population()`: Spawns initial population from randomly generated genomes
+
+## Build-Time Modular Targets
+
+The build now composes simulation functionality from focused internal libraries:
+
+- `sim_runtime` - Scheduler + `SimulationApp` lifecycle
+- `sim_environment` - Terrain/soil/plant/feeding environment systems
+- `sim_physics` - Physics system and backend pipeline
+- `sim_ecology` - Brain/motor/metabolism/fitness/reproduction/species/scenario
+- `sim_telemetry` - Runtime stats + telemetry outputs
+- `sim_core` - Compatibility aggregation target linking all modules above
 
 ## Data Flow
 
@@ -106,7 +139,15 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    │
    ├─> Scheduler::tick_systems(context)
    │   │
-   │   └─> For each registered system:
+   │   └─> For each registered system in stage order:
+   │       ├─> Bootstrap
+   │       ├─> PrePhysics
+   │       ├─> Ecology
+   │       ├─> Physics
+   │       ├─> Metrics
+   │       └─> PostTick
+   │
+   │       For each system in stage registration order:
    │       ├─> ISystem::tick(context)
    │       └─> System reads/writes components via registry
    │
@@ -170,8 +211,9 @@ The environment module provides a living world with terrain, soil nutrients, pla
 
 **Soil**:
 - 2D nutrient grid with diffusion and regeneration
-- Plants sample nutrients for growth
-- Stored as global service in `registry.ctx<SoilGrid>()`
+- 3D soil volume for volumetric nutrient sampling
+- Plants sample nutrients for growth (prefers `SoilVolume` when present)
+- Stored as global services in `registry.ctx<SoilGrid>()` and `registry.ctx<SoilVolume>()`
 
 **Plants**:
 - Grow from soil nutrients
@@ -180,9 +222,10 @@ The environment module provides a living world with terrain, soil nutrients, pla
 - Lifecycle managed by growth, seeding, and cleanup systems
 
 **Feeding**:
-- Herbivores consume nearby plants
-- Energy transferred from `PlantComponent` to `MetabolismComponent`
-- Spatial queries via `PlantSpatialIndex` for efficiency
+- Herbivores consume nearby plants; carnivores consume nearby prey
+- Energy transferred from plants/prey to `MetabolismComponent`
+- Spatial queries via `PlantSpatialIndex` for plant lookups
+- Carnivore attacks gated by `ActuationComponent::attack` and `CombatComponent`
 
 ## Extension Points
 
@@ -298,4 +341,3 @@ sim/
 - [Module Documentation](./modules/) - Detailed module specs
 - [API Reference](./api/) - Complete API documentation
 - [Data Contracts](./data-contracts/) - Inter-module data flow
-

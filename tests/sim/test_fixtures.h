@@ -20,6 +20,31 @@
 namespace evolution::sim::test {
 
 /**
+ * @brief Result of snapshot comparison.
+ */
+enum class SnapshotDiffKind {
+    None,
+    EntityCountMismatch,
+    PlantCountMismatch,
+    HerbivoreCountMismatch,
+    BiomassMismatch,
+    SoilMismatch,
+    SpeciesCountMismatch,
+    BiomomeBiomassMismatch,
+    StateHashMismatch
+};
+
+/**
+ * @brief Snapshot comparison result with details.
+ */
+struct SnapshotDiff {
+    SnapshotDiffKind kind{SnapshotDiffKind::None};
+    std::string message{};
+    double expected_value{0.0};
+    double actual_value{0.0};
+};
+
+/**
  * @brief Test fixture providing deterministic simulation setup.
  */
 class SimulationFixture {
@@ -97,6 +122,9 @@ private:
  * @brief Compute hash of entity state for determinism checks.
  */
 [[nodiscard]] std::string hash_entity_state(entt::registry& registry);
+
+// Snapshot comparison utilities (compare_snapshots, assert_snapshot_matches)
+// TODO: Implement after resolving macro compilation issue
 
 }  // namespace evolution::sim::test
 

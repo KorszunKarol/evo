@@ -153,6 +153,89 @@ struct MetabolismComponent {
 
 ---
 
+### DietComponent Access
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `type`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: Spawn systems (initialization)
+- **Write Fields**: `type`
+- **Write Frequency**: Once per entity lifetime
+- **Thread Safety**: Not thread-safe
+- **Validation**: Must be `DietType::Herbivore` or `DietType::Carnivore`
+
+**Data Format**:
+```cpp
+struct DietComponent {
+    DietType type;  // Herbivore or Carnivore
+};
+```
+
+**Guarantees**:
+- `type` remains stable after initialization
+
+---
+
+### CombatComponent Access
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `attack_cooldown`, `attack_timer`, `target`, `damage_dealt`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: FeedingSystem
+- **Write Fields**: `attack_timer`, `target`, `damage_dealt`
+- **Write Frequency**: On successful predation or cooldown updates
+- **Thread Safety**: Not thread-safe
+- **Validation**: `attack_timer` must remain in `[0, attack_cooldown]`
+
+**Data Format**:
+```cpp
+struct CombatComponent {
+    double attack_cooldown;
+    double attack_timer;
+    entt::entity target;
+    double damage_dealt;
+};
+```
+
+**Guarantees**:
+- Cooldown timer never negative after update
+
+---
+
+### ActuationComponent Access (Attack Field)
+
+**Read Contract**:
+- **Readers**: FeedingSystem
+- **Read Fields**: `attack`
+- **Read Frequency**: Every tick (feeding)
+- **Thread Safety**: Not thread-safe
+
+**Write Contract**:
+- **Writers**: BrainInferenceSystem
+- **Write Fields**: `attack`
+- **Write Frequency**: Every inference update
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct ActuationComponent {
+    bool attack;  // Attack request for predators
+};
+```
+
+**Guarantees**:
+- Attack intent is interpreted as a per-tick request; systems may clear it after use
+
+---
+
 ### GenomeHandleComponent Access
 
 **Read Contract**:
@@ -237,6 +320,8 @@ struct GenomeHandleComponent {
 - **No explicit dependencies**: Systems run in registration order
 - **Implicit dependencies**: Systems may depend on other systems' outputs
 - **Example**: Physics system should run after force-accumulating systems
+- **ReproductionSystem**: Must run after `MetabolismSystem` to ensure energy thresholds accurate
+- **SpeciesIndexSystem**: Expensive O(N²) operation; consider running periodically rather than every tick for large populations
 
 ---
 
@@ -442,6 +527,48 @@ Physics Backend (narrow-phase)
 - Arrays are reset before each update to avoid drift.
 - Consumers treat the struct as read-only between updates.
 
+---
+
+### SpeciesIndexContext Service Contract
+
+**Contract**: `SpeciesIndexContext` provides access to the species clustering system stored in the registry context when `scenario.enable_species_index` is true.
+
+**Read Contract**:
+- **Readers**: Telemetry systems (species rollups), future evolutionary analysis systems
+- **Read Fields**: `SpeciesIndexContext::system` (pointer)
+- **Read Frequency**: On-demand (when species classification needed)
+- **Thread Safety**: Not thread-safe (simulation thread only)
+
+**Write Contract**:
+- **Writers**: `setup_scenario()` during simulation initialization
+- **Write Fields**: `SpeciesIndexContext::system` (pointer assignment)
+- **Write Frequency**: Once during setup
+- **Thread Safety**: Not thread-safe
+- **Validation**: Context only exists when `scenario.enable_species_index == true`
+
+**Data Format**:
+```cpp
+struct SpeciesIndexContext {
+    SpeciesIndexSystem* system{nullptr};  // Pointer to species clustering system
+};
+```
+
+**Gating**:
+- **Scenario Flag**: `SimulationScenario::enable_species_index` controls context availability
+- **When Disabled**: Context not added to registry; systems must check existence before access
+- **When Enabled**: Context available for entire simulation lifetime
+
+**Performance Considerations**:
+- **Cost**: `SpeciesIndexSystem::tick()` is O(N²) where N = genome count (distance matrix computation)
+- **Recommendation**: Run periodically rather than every tick for large populations
+- **Access**: `system->get_species(genome_id)` provides O(1) average species lookup
+
+**Guarantees**:
+- Context pointer is valid for the lifetime of the simulation (when enabled)
+- `system == nullptr` indicates species indexing disabled
+- Species IDs are deterministic for a given threshold and genome set
+- System maintains species count within configured target range via dynamic threshold adjustment
+
 ### Plants ↔ Soil Contract
 
 **Contract**: Plants sample soil nutrients for growth.
@@ -450,13 +577,15 @@ Physics Backend (narrow-phase)
 ```
 PlantGrowthSystem
     ├─> Read: TransformComponent::position
-    ├─> Read: SoilGrid::sample(x, z) at plant position
+    ├─> Read: SoilVolume::sample(pos) when available
+    ├─> Fallback: SoilGrid::sample(x, z) when SoilVolume is absent
     ├─> Compute: growth = growth_rate * dt * soil_factor
     └─> Write: PlantComponent::energy += growth (clamped to max_energy)
 ```
 
 **Preconditions**:
 - Soil grid exists in `registry.ctx<SoilGrid>()`
+- Soil volume may exist in `registry.ctx<SoilVolume>()`
 - Plant has `TransformComponent` and `PlantComponent`
 
 **Postconditions**:
@@ -467,29 +596,40 @@ PlantGrowthSystem
 
 ### Feeding ↔ Plants ↔ Metabolism Contract
 
-**Contract**: Feeding transfers energy from plants to herbivore metabolism.
+**Contract**: Feeding transfers energy from plants or prey based on diet.
 
 **Data Flow**:
 ```
 FeedingSystem
-    ├─> Query: PlantSpatialIndex for plants near herbivore
-    ├─> For each plant in radius:
-    │   ├─> Check: distance <= reach + plant.radius
-    │   ├─> Read: PlantComponent::energy, FeedingIntent::rate
-    │   ├─> Compute: transfer = min(plant.energy, rate * dt)
-    │   ├─> Write: MetabolismComponent::energy += transfer (clamped)
-    │   └─> Write: PlantComponent::energy -= transfer
-    └─> Mark plant dead if energy <= 0
+    ├─> Read: DietComponent::type
+    ├─> Herbivore path:
+    │   ├─> Query: PlantSpatialIndex for plants near herbivore
+    │   ├─> For each plant in radius:
+    │   │   ├─> Check: distance <= reach + plant.radius
+    │   │   ├─> Read: PlantComponent::energy, FeedingIntent::rate
+    │   │   ├─> Compute: transfer = min(plant.energy, rate * dt)
+    │   │   ├─> Write: MetabolismComponent::energy += transfer (clamped)
+    │   │   └─> Write: PlantComponent::energy -= transfer
+    │   └─> Mark plant dead if energy <= 0
+    ├─> Carnivore path:
+    │   ├─> Gate: ActuationComponent::attack (if present)
+    │   ├─> Check: CombatComponent::attack_timer (cooldown)
+    │   ├─> Scan: prey entities with MetabolismComponent
+    │   ├─> Compute: transfer = min(prey.energy, rate * dt)
+    │   ├─> Write: MetabolismComponent::energy += transfer (predator)
+    │   └─> Write: prey MetabolismComponent::energy -= transfer
+    └─> Update CombatComponent cooldown and target on successful attack
 ```
 
 **Preconditions**:
-- Herbivore has `HerbivoreTag`, `FeedingIntent`, `MetabolismComponent`
+- Feeder has `FeedingIntent`, `MetabolismComponent`, `DietComponent`
 - Plant has `PlantComponent` with `alive == true`
-- `PlantSpatialIndex` rebuilt before feeding queries
+- `PlantSpatialIndex` rebuilt before herbivore feeding queries
+- Carnivores may have `ActuationComponent` and `CombatComponent` for gating
 
 **Postconditions**:
 - Energy never < 0 (clamped)
-- Herbivore energy never > max_energy (clamped)
+- Predator energy never > max_energy (clamped)
 - Plant marked dead if energy depleted
 
 **Energy Conservation**: Energy transferred atomically; no loss during transfer.
@@ -536,4 +676,69 @@ FeedingSystem
 - **Update Frequency**: Periodic snapshots (not every tick)
 - **Delta Compression**: Only changed components transmitted
 - **Consistency**: Deterministic simulation ensures consistency
+---
 
+## Telemetry Contracts
+
+### Telemetry Context Access
+
+**Read Contract**:
+- **Readers**: Systems emitting events (FeedingSystem, MetabolismSystem, ReproductionSystem, SpeciesIndexSystem, BrainInferenceSystem, MotorSystem)
+- **Read Fields**: `TelemetryContext::system`
+- **Read Frequency**: Event-triggered
+- **Thread Safety**: Not thread-safe (simulation thread only)
+
+**Write Contract**:
+- **Writers**: Scenario setup
+- **Write Fields**: `TelemetryContext::system`
+- **Write Frequency**: Once during setup
+- **Thread Safety**: Not thread-safe
+
+**Data Format**:
+```cpp
+struct TelemetryContext {
+    TelemetrySystem* system;
+};
+```
+
+**Guarantees**:
+- Pointer is valid for the lifetime of the simulation
+- Context exists only when telemetry is enabled
+
+---
+
+### Telemetry Output Files
+
+**Events**:
+- **File**: `telemetry/events.jsonl`
+- **Format**: JSON Lines
+- **Schema**:
+```json
+{
+  "schema_version": 2,
+  "run_id": "default",
+  "type": "ENTITY_SPAWN",
+  "sim_time": 12.34,
+  "payload": { "entity_id": 42 }
+}
+```
+
+**Rollups**:
+- **File**: `telemetry/metrics.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy
+```
+
+**Species Rollups**:
+- **File**: `telemetry/species_rollups.csv`
+- **Format**: CSV
+- **Schema**:
+```
+schema_version,run_id,sim_time,species_id,population,mean_energy
+```
+
+**Guarantees**:
+- `schema_version` increments on breaking schema changes
+- `run_id` is stable across all records within a run

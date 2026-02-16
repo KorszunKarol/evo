@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "evolution/genetics/genome_storage.h"
 #include "evolution/genetics/genome_ops.h"
@@ -20,6 +21,12 @@ struct SimulationScenario {
     std::uint64_t genome_seed{2025};        ///< Seed for initial genome generation.
     std::uint64_t reproduction_seed{0xBEEFu}; ///< Global reproduction system seed.
     bool enable_species_index{true};        ///< Run species clustering system.
+    bool enable_telemetry{true};           ///< Enable telemetry system and outputs.
+    std::string telemetry_output_dir{"output"}; ///< Output root for telemetry files.
+    std::string telemetry_run_id{"default"};   ///< Telemetry run identifier.
+    double telemetry_rollup_interval{1.0}; ///< Rollup cadence in seconds (0 disables).
+    std::size_t telemetry_buffer_size{1000}; ///< Flush threshold for event buffer.
+    double telemetry_sampling_rate{0.0};   ///< Sampling rate for non-targeted events.
 };
 
 /**

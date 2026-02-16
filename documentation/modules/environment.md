@@ -12,6 +12,8 @@ The environment module provides terrain generation, soil nutrient simulation, pl
 - `sim/src/environment/environment_bootstrap.cpp`
 - `sim/include/evolution/sim/environment/soil_system.h`
 - `sim/src/environment/soil_system.cpp`
+- `sim/include/evolution/sim/environment/soil_volume.h`
+- `sim/src/environment/soil_volume.cpp`
 - `sim/include/evolution/sim/environment/plant_systems.h`
 - `sim/src/environment/plant_systems.cpp`
 - `sim/include/evolution/sim/environment/feeding_system.h`
@@ -91,6 +93,44 @@ double mean_nutrient() const noexcept;
 **Thread Safety**: Not thread-safe; mutations occur during `SoilSystem::tick()`.
 
 **Storage**: Stored in `registry.ctx<SoilGrid>()` as a global service.
+
+### SoilVolume
+
+**Purpose**: 3D voxel-based soil field used for volumetric nutrient sampling.
+
+**Public API**:
+```cpp
+explicit SoilVolume(const SoilVolumeConfig& config);
+SoilVoxel& at(int x, int y, int z);
+const SoilVoxel& at(int x, int y, int z) const;
+SoilVoxel sample(const Vec3& pos) const;
+void diffuse(double dt);
+void regenerate(double dt, const BiomeMap* biome_map, double climate_mult);
+int width() const;
+int height() const;
+int depth() const;
+double voxel_size() const;
+```
+
+**Parameters**:
+- `SoilVolumeConfig`:
+  - `width`, `height`, `depth`: Voxel grid dimensions
+  - `voxel_size`: World-space voxel size (meters)
+  - `diffusion_rate`: Diffusion coefficient for nutrient mixing
+
+**Returns**:
+- `sample()`: Trilinearly interpolated `SoilVoxel`
+- `width()/height()/depth()`: Grid dimensions
+- `voxel_size()`: World-space voxel size
+
+**Implementation Details**:
+- Stores NPK, pH, and water per voxel
+- Diffusion uses a 6-neighbor stencil with a scratch buffer
+- Regeneration currently applies to nitrogen only (proxy for nutrients)
+
+**Thread Safety**: Not thread-safe; mutations occur during `SoilSystem::tick()`.
+
+**Storage**: Stored in `registry.ctx<SoilVolume>()` as a global service.
 
 ### BiomeMap
 
@@ -181,6 +221,10 @@ index.for_each_in_radius(registry, position, 2.0, [](entt::entity plant, double 
 - `for_each_in_radius()`: O(K) where K = plants in radius (amortized O(1) per plant)
 
 **Thread Safety**: Not thread-safe; rebuilds occur during plant system ticks.
+
+**Seeding Safeguards**:
+- Plant seeding uses density checks via `PlantSpatialIndex` before spawning.
+- A global plant cap (20k) throttles seeding probability near capacity.
 
 ### EnvironmentStats
 
@@ -312,7 +356,7 @@ std::string_view name() const override;
 
 ### FeedingSystem
 
-**Purpose**: Transfers energy from plants to herbivores within reach.
+**Purpose**: Transfers energy from plants or prey to feeders based on diet.
 
 **Public API**:
 ```cpp
@@ -323,21 +367,24 @@ std::string_view name() const override;
 
 **Responsibilities**:
 - Query `PlantSpatialIndex` for plants near each herbivore
-- If distance <= `reach + plant.radius`: transfer energy
-- Transfer rate: `min(plant.energy, intent.rate * dt)`
-- Update herbivore `MetabolismComponent::energy` (clamped to max)
-- Reduce plant `PlantComponent::energy`
-- Mark plant dead if energy reaches zero
+- If distance <= `reach + plant.radius`: transfer energy from plants
+- For carnivores, scan prey entities within `reach` and transfer energy on attack
+- Transfer rate: `min(source.energy, intent.rate * dt)`
+- Update predator `MetabolismComponent::energy` (clamped to max)
+- Reduce plant/prey energy and mark plants dead if depleted
+- Apply attack cooldowns via `CombatComponent`
 
 **Component Requirements**:
-- Herbivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `HerbivoreTag`
+- Herbivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `DietComponent`
+- Carnivore: `TransformComponent`, `MetabolismComponent`, `FeedingIntent`, `DietComponent`, `CombatComponent` (optional)
+- Optional: `ActuationComponent` (attack gating)
 - Plant: `TransformComponent`, `PlantComponent`
 
 **Data Flow**:
-- Reads: `PlantSpatialIndex`, plant/herbivore positions, plant energy, feeding intent
-- Writes: `MetabolismComponent::energy`, `PlantComponent::energy`, `PlantComponent::alive`
+- Reads: `PlantSpatialIndex`, positions, plant energy, prey energy, feeding intent, diet type
+- Writes: `MetabolismComponent::energy`, `PlantComponent::energy`, prey `MetabolismComponent::energy`, `PlantComponent::alive`, `CombatComponent`
 
-**Performance**: O(H × P_avg) where H = herbivore count, P_avg = average plants in radius.
+**Performance**: O(H × P_avg + C × N) where H = herbivores, C = carnivores, N = prey candidates.
 
 ## Components
 
@@ -409,6 +456,20 @@ struct HerbivoreTag {};
 - **Written by**: Spawn systems
 - **Thread Safety**: Not applicable (tag only)
 
+### CarnivoreTag
+
+**Structure**:
+```cpp
+struct CarnivoreTag {};
+```
+
+**Purpose**: Empty tag component marking entities that can consume other entities.
+
+**Data Contract**:
+- **Read by**: FeedingSystem (for filtering carnivores)
+- **Written by**: Spawn systems
+- **Thread Safety**: Not applicable (tag only)
+
 ## Data Contracts
 
 ### Terrain ↔ Physics
@@ -427,19 +488,20 @@ struct HerbivoreTag {};
 **Contract**: Plants sample soil nutrients for growth.
 
 **Data Flow**:
-- PlantGrowthSystem reads: `SoilGrid::sample(x, z)` at plant position
+- PlantGrowthSystem reads: `SoilVolume::sample(pos)` when available (fallback: `SoilGrid::sample(x, z)`)
 - Future: Plants may consume soil nutrients (not implemented in v1)
 
 **Synchronization**: Soil updates occur before plant growth in system order.
 
 ### Feeding ↔ Plants ↔ Metabolism
 
-**Contract**: Feeding transfers energy from plants to herbivore metabolism.
+**Contract**: Feeding transfers energy from plants or prey based on diet.
 
 **Data Flow**:
-- FeedingSystem reads: `PlantComponent::energy`, `MetabolismComponent::energy`
-- FeedingSystem writes: `PlantComponent::energy` (decreased), `MetabolismComponent::energy` (increased)
-- Guarantee: Energy never < 0; herbivore energy clamped to `max_energy`
+- FeedingSystem reads: `DietComponent::type`, `PlantComponent::energy`, prey `MetabolismComponent::energy`
+- FeedingSystem writes: `PlantComponent::energy` or prey `MetabolismComponent::energy` (decreased)
+- FeedingSystem writes: predator `MetabolismComponent::energy` (increased)
+- Guarantee: Energy never < 0; predator energy clamped to `max_energy`
 
 **Energy Conservation**: Energy transferred atomically; no loss during transfer.
 
@@ -459,14 +521,16 @@ struct HerbivoreTag {};
 
 - **Terrain::height()**: O(1) - bilinear interpolation
 - **SoilGrid::diffuse()**: O(W×H) - five-point stencil
+- **SoilVolume::diffuse()**: O(W×H×D) - 6-neighbor stencil
 - **PlantGrowthSystem::tick()**: O(N) where N = plant count
 - **PlantSeedingSystem::tick()**: O(N) with occasional spawns
-- **FeedingSystem::tick()**: O(H × P_avg) where H = herbivores, P_avg = plants in radius
+- **FeedingSystem::tick()**: O(H × P_avg + C × N) where H = herbivores, C = carnivores, N = prey candidates
 
 ### Space Complexity
 
 - **Terrain**: O(W×H) height samples
 - **SoilGrid**: O(W×H) nutrient values + scratch buffer
+- **SoilVolume**: O(W×H×D) voxel values + scratch buffer
 - **PlantSpatialIndex**: O(N) where N = plant count
 
 ### Optimization Strategies
@@ -494,8 +558,6 @@ struct HerbivoreTag {};
 - [Components Module](./components.md) - Component definitions
 - [Physics System Module](./physics_system.md) - Terrain collision integration
 - [Core Simulation Module](./core_simulation.md) - System execution infrastructure
-
-
 
 
 

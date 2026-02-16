@@ -173,38 +173,94 @@ target_compile_options(sim_genetics PRIVATE
 )
 add_dependencies(sim_genetics genome_schema_codegen)
 
-# Simulation library
-add_library(sim_core
+# Modular simulation libraries
+add_library(sim_runtime
     sim/src/scheduler.cpp
     sim/src/simulation_app.cpp
-    sim/src/physics_system.cpp
-    sim/src/metabolism_system.cpp
-    sim/src/brain_inference_system.cpp
-    sim/src/motor_system.cpp
-    sim/src/stats_system.cpp
+)
+
+add_library(sim_environment
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
+    sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
     sim/src/environment/feeding_system.cpp
-    sim/src/fitness_update_system.cpp
+)
+
+add_library(sim_physics
+    sim/src/physics_system.cpp
     sim/src/physics/broad_phase.cpp
     sim/src/physics/narrow_phase.cpp
     sim/src/physics/solver.cpp
     sim/src/physics/simple_backend.cpp
+)
+
+add_library(sim_telemetry
+    sim/src/stats_system.cpp
+    sim/src/telemetry/telemetry_system.cpp
+)
+
+add_library(sim_ecology
+    sim/src/metabolism_system.cpp
+    sim/src/brain_inference_system.cpp
+    sim/src/motor_system.cpp
+    sim/src/fitness_update_system.cpp
     sim/src/species_index_system.cpp
     sim/src/reproduction_system.cpp
     sim/src/scenario.cpp
 )
 
-target_include_directories(sim_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/sim/include
+# Compatibility aggregation target
+add_library(sim_core INTERFACE)
+
+target_include_directories(sim_runtime PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_environment PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_physics PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_telemetry PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_ecology PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+
+target_link_libraries(sim_runtime PUBLIC
+    EnTT::EnTT
+    spdlog::spdlog
 )
 
-target_link_libraries(sim_core PUBLIC
+target_link_libraries(sim_environment PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_physics PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_telemetry PUBLIC
+    sim_runtime
+    sim_environment
     sim_genetics
     EnTT::EnTT
     spdlog::spdlog
+)
+
+target_link_libraries(sim_ecology PUBLIC
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_genetics
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_core INTERFACE
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_ecology
 )
 
 # Main executable
@@ -234,7 +290,23 @@ target_compile_options(render_client PRIVATE
 )
 
 # Compiler warnings
-target_compile_options(sim_core PRIVATE
+target_compile_options(sim_runtime PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_environment PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_physics PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_telemetry PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_ecology PRIVATE
     -Wall -Wextra -Wpedantic
     -Wno-unused-parameter  # Common in callback-heavy code
 )
@@ -255,6 +327,8 @@ add_executable(sim_tests
     tests/genetics/test_compatibility_distance.cpp
     tests/genetics/test_mutation_crossover.cpp
     tests/sim/test_fitness_update.cpp
+    tests/sim/test_scheduler_stages.cpp
+    tests/sim/test_runtime_contracts.cpp
     tests/sim/test_fixtures.cpp
     tests/sim/test_rng_seed_derivation.cpp
     tests/sim/test_fitness_component.cpp
@@ -263,7 +337,11 @@ add_executable(sim_tests
     tests/sim/test_plant_species_mapping.cpp
     tests/sim/test_reproduction_determinism.cpp
     tests/sim/test_integration_system_ordering.cpp
+    tests/sim/test_telemetry.cpp
     tests/sim/test_performance_cadence.cpp
+    tests/sim/test_scenarios.cpp
+    tests/sim/test_ecs_lifecycle.cpp
+    tests/sim/test_integration_invariants.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE
@@ -276,3 +354,20 @@ target_compile_options(sim_tests PRIVATE -Wall -Wextra -Wpedantic)
 include(GoogleTest)
 gtest_discover_tests(sim_tests)
 
+# Test categories for local development workflows
+# Use ctest -R <pattern> to run specific test groups
+#
+# Smoke tests (fast sanity checks):
+#   ctest --test-dir build -R "Mutation.Determinism|Crossover.Determinism|RngSeedDerivation.DeterministicSameInputs|IntegrationSystemOrdering.DeterministicRun" --output-on-failure
+#
+# Determinism tests:
+#   ctest --test-dir build -R "Determinism|RngSeedDerivation|SpeciesClustering.(DeterministicSameGenomes|ReproducibleAcrossRuns)|BiomeMap.DeterministicSameSeed|WaterMap.DeterministicSameSeed" --output-on-failure
+#
+# Integration tests (cross-system):
+#   ctest --test-dir build -R "IntegrationSystemOrdering|BiomeWaterIntegration|PlantSpeciesMapping" --output-on-failure
+#
+# Performance tests:
+#   ctest --test-dir build -R "PerformanceCadence" --output-on-failure
+#
+# Run all tests:
+#   ctest --test-dir build --output-on-failure
