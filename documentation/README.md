@@ -7,6 +7,8 @@
 ## Architecture Documentation
 
 - [Architecture Overview](./architecture/overview.md) - High-level system design
+- [Recovery Baseline (2026-02-16)](./architecture/recovery_baseline.md) - Stabilization checkpoint and resolved failures
+- [Module Ownership](./architecture/module_ownership.md) - Ownership boundaries and review escalation
 - [Module Documentation](./modules/) - Detailed module specifications
 - [API Reference](./api/) - Complete function signatures
 - [Data Contracts](./data-contracts/) - Inter-module communication
@@ -120,3 +122,11 @@ When adding new code:
 - **Keep in sync**: Documentation should match code
 - **Update on changes**: Modify docs when APIs change
 - **Review regularly**: Ensure accuracy and completeness
+
+## Runtime Contracts
+
+- Runtime interfaces and health/run metadata types live in `sim/include/evolution/sim/runtime_contracts.h`.
+
+## Tooling References
+
+- [Project Health Template](./tools/project_health.md) - Standardized health checkpoint format

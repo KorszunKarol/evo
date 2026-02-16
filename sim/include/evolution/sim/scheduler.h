@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -44,6 +46,16 @@ public:
 ///
 class Scheduler {
 public:
+    enum class SystemStage : std::size_t {
+        Bootstrap = 0,
+        PrePhysics = 1,
+        Ecology = 2,
+        Physics = 3,
+        Metrics = 4,
+        PostTick = 5,
+        Count = 6
+    };
+
     ///
     /// @brief Adds a system to the execution list in registration order.
     ///
@@ -55,6 +67,14 @@ public:
     void add_system(std::unique_ptr<ISystem> system);
 
     ///
+    /// @brief Adds a system to a specific execution stage.
+    ///
+    /// @param stage Stage bucket used to enforce high-level ordering.
+    /// @param system Ownership-transferring pointer to system instance.
+    ///
+    void add_system(SystemStage stage, std::unique_ptr<ISystem> system);
+
+    ///
     /// @brief Invokes all registered systems using the supplied context.
     ///
     /// @param context SimulationContext& Shared tick context propagated to each system.
@@ -64,8 +84,9 @@ public:
     void tick_systems(SimulationContext& context);
 
 private:
-    /// @brief Ordered list of systems invoked each tick.
-    std::vector<std::unique_ptr<ISystem>> systems_;
+    /// @brief Systems grouped by stage; each stage preserves insertion order.
+    std::array<std::vector<std::unique_ptr<ISystem>>, static_cast<std::size_t>(SystemStage::Count)>
+        staged_systems_{};
 };
 
 }  // namespace evolution::sim

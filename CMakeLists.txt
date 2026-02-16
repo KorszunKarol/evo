@@ -173,40 +173,94 @@ target_compile_options(sim_genetics PRIVATE
 )
 add_dependencies(sim_genetics genome_schema_codegen)
 
-# Simulation library
-add_library(sim_core
+# Modular simulation libraries
+add_library(sim_runtime
     sim/src/scheduler.cpp
     sim/src/simulation_app.cpp
-    sim/src/physics_system.cpp
-    sim/src/metabolism_system.cpp
-    sim/src/brain_inference_system.cpp
-    sim/src/motor_system.cpp
-    sim/src/stats_system.cpp
-    sim/src/telemetry/telemetry_system.cpp
+)
+
+add_library(sim_environment
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
     sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
     sim/src/environment/feeding_system.cpp
-    sim/src/fitness_update_system.cpp
+)
+
+add_library(sim_physics
+    sim/src/physics_system.cpp
     sim/src/physics/broad_phase.cpp
     sim/src/physics/narrow_phase.cpp
     sim/src/physics/solver.cpp
     sim/src/physics/simple_backend.cpp
+)
+
+add_library(sim_telemetry
+    sim/src/stats_system.cpp
+    sim/src/telemetry/telemetry_system.cpp
+)
+
+add_library(sim_ecology
+    sim/src/metabolism_system.cpp
+    sim/src/brain_inference_system.cpp
+    sim/src/motor_system.cpp
+    sim/src/fitness_update_system.cpp
     sim/src/species_index_system.cpp
     sim/src/reproduction_system.cpp
     sim/src/scenario.cpp
 )
 
-target_include_directories(sim_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/sim/include
+# Compatibility aggregation target
+add_library(sim_core INTERFACE)
+
+target_include_directories(sim_runtime PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_environment PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_physics PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_telemetry PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_ecology PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+
+target_link_libraries(sim_runtime PUBLIC
+    EnTT::EnTT
+    spdlog::spdlog
 )
 
-target_link_libraries(sim_core PUBLIC
+target_link_libraries(sim_environment PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_physics PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_telemetry PUBLIC
+    sim_runtime
+    sim_environment
     sim_genetics
     EnTT::EnTT
     spdlog::spdlog
+)
+
+target_link_libraries(sim_ecology PUBLIC
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_genetics
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_core INTERFACE
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_ecology
 )
 
 # Main executable
@@ -236,7 +290,23 @@ target_compile_options(render_client PRIVATE
 )
 
 # Compiler warnings
-target_compile_options(sim_core PRIVATE
+target_compile_options(sim_runtime PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_environment PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_physics PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_telemetry PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter  # Common in callback-heavy code
+)
+target_compile_options(sim_ecology PRIVATE
     -Wall -Wextra -Wpedantic
     -Wno-unused-parameter  # Common in callback-heavy code
 )
@@ -257,6 +327,7 @@ add_executable(sim_tests
     tests/genetics/test_compatibility_distance.cpp
     tests/genetics/test_mutation_crossover.cpp
     tests/sim/test_fitness_update.cpp
+    tests/sim/test_scheduler_stages.cpp
     tests/sim/test_fixtures.cpp
     tests/sim/test_rng_seed_derivation.cpp
     tests/sim/test_fitness_component.cpp

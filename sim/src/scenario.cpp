@@ -92,25 +92,28 @@ void setup_scenario(SimulationApp& app,
 
     auto backend = std::make_unique<SimplePhysicsBackend>(physics_config);
 
-    app.scheduler().add_system(std::make_unique<SoilSystem>());
-    app.scheduler().add_system(std::make_unique<PlantGrowthSystem>());
-    app.scheduler().add_system(std::make_unique<PlantSeedingSystem>(scenario.environment.plants.seed + 7));
-    app.scheduler().add_system(std::make_unique<PlantSpatialSystem>());
-    app.scheduler().add_system(std::make_unique<FeedingSystem>());
-    app.scheduler().add_system(std::make_unique<PlantCleanupSystem>());
-    app.scheduler().add_system(std::make_unique<BrainInferenceSystem>(storage));
-    app.scheduler().add_system(std::make_unique<MotorSystem>());
-    app.scheduler().add_system(std::make_unique<MetabolismSystem>());
-    app.scheduler().add_system(std::make_unique<FitnessUpdateSystem>());
-    app.scheduler().add_system(std::make_unique<ReproductionSystem>(storage,
+    app.scheduler().add_system(Scheduler::SystemStage::PrePhysics, std::make_unique<SoilSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::PrePhysics, std::make_unique<PlantGrowthSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::PrePhysics,
+                               std::make_unique<PlantSeedingSystem>(scenario.environment.plants.seed + 7));
+    app.scheduler().add_system(Scheduler::SystemStage::PrePhysics, std::make_unique<PlantSpatialSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<FeedingSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<PlantCleanupSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<BrainInferenceSystem>(storage));
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<MotorSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<MetabolismSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology, std::make_unique<FitnessUpdateSystem>());
+    app.scheduler().add_system(Scheduler::SystemStage::Ecology,
+                               std::make_unique<ReproductionSystem>(storage,
                                                                     scenario.reproduction,
                                                                     scenario.reproduction_seed));
     if (scenario.enable_species_index) {
-        app.scheduler().add_system(std::make_unique<SpeciesIndexSystem>(storage,
+        app.scheduler().add_system(Scheduler::SystemStage::Ecology,
+                                   std::make_unique<SpeciesIndexSystem>(storage,
                                                                         scenario.reproduction));
     }
-    app.scheduler().add_system(std::make_unique<PhysicsSystem>(std::move(backend)));
-    app.scheduler().add_system(std::make_unique<StatsSystem>(1.0));
+    app.scheduler().add_system(Scheduler::SystemStage::Physics, std::make_unique<PhysicsSystem>(std::move(backend)));
+    app.scheduler().add_system(Scheduler::SystemStage::Metrics, std::make_unique<StatsSystem>(1.0));
 
     if (scenario.enable_telemetry) {
         TelemetryTargeting targeting{};
@@ -124,7 +127,7 @@ void setup_scenario(SimulationApp& app,
                                                           targeting,
                                                           rollup);
         TelemetrySystem* telemetry_ptr = telemetry.get();
-        app.scheduler().add_system(std::move(telemetry));
+        app.scheduler().add_system(Scheduler::SystemStage::Metrics, std::move(telemetry));
         app.registry().ctx().emplace<TelemetryContext>(TelemetryContext{.system = telemetry_ptr});
     }
 
@@ -132,5 +135,4 @@ void setup_scenario(SimulationApp& app,
 }
 
 }  // namespace evolution::sim
-
 

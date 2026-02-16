@@ -112,6 +112,17 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    - `setup_scenario()`: Configures simulation app with systems and services
    - `seed_initial_population()`: Spawns initial population from randomly generated genomes
 
+## Build-Time Modular Targets
+
+The build now composes simulation functionality from focused internal libraries:
+
+- `sim_runtime` - Scheduler + `SimulationApp` lifecycle
+- `sim_environment` - Terrain/soil/plant/feeding environment systems
+- `sim_physics` - Physics system and backend pipeline
+- `sim_ecology` - Brain/motor/metabolism/fitness/reproduction/species/scenario
+- `sim_telemetry` - Runtime stats + telemetry outputs
+- `sim_core` - Compatibility aggregation target linking all modules above
+
 ## Data Flow
 
 ### Tick Execution Flow
@@ -128,7 +139,15 @@ The Evolution Simulation is built on a **headless simulation server** architectu
    │
    ├─> Scheduler::tick_systems(context)
    │   │
-   │   └─> For each registered system:
+   │   └─> For each registered system in stage order:
+   │       ├─> Bootstrap
+   │       ├─> PrePhysics
+   │       ├─> Ecology
+   │       ├─> Physics
+   │       ├─> Metrics
+   │       └─> PostTick
+   │
+   │       For each system in stage registration order:
    │       ├─> ISystem::tick(context)
    │       └─> System reads/writes components via registry
    │

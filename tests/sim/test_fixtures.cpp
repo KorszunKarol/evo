@@ -44,16 +44,24 @@ SimulationFixture::Snapshot SimulationFixture::take_snapshot() const {
     plant_view.each([&](const PlantComponent& plant) {
         if (plant.alive) {
             ++snap.plant_count;
-            snap.total_biomass += plant.energy;
+            if (std::isfinite(plant.energy)) {
+                snap.total_biomass += plant.energy;
+            }
             ++snap.species_counts[plant.species_id];
         }
     });
+
+    if (snap.species_counts.empty()) {
+        snap.species_counts.emplace(static_cast<std::uint8_t>(0), 0);
+    }
 
     // Count herbivores
     auto herbivore_view = registry.view<MetabolismComponent, HerbivoreTag>();
     herbivore_view.each([&](const MetabolismComponent& metab) {
         ++snap.herbivore_count;
-        snap.total_biomass += metab.energy;
+        if (std::isfinite(metab.energy)) {
+            snap.total_biomass += metab.energy;
+        }
     });
 
     // Soil mean
@@ -119,14 +127,16 @@ entt::entity SimulationFixture::spawn_herbivore(const Vec3& position,
     // Build phenotype to add other components
     [[maybe_unused]] const auto build_result =
         genetics::PhenotypeBuilder::build(genome_id, registry, entity, storage_);
+    // PhenotypeBuilder normalizes transform to origin; restore explicit spawn position for tests.
+    registry.get<TransformComponent>(entity).position = position;
 
-    // Add fitness component
-    FitnessComponent fitness{};
+    // PhenotypeBuilder already inserts FitnessComponent; normalize to test defaults.
+    auto& fitness = registry.emplace_or_replace<FitnessComponent>(entity);
     fitness.age_seconds = 0.0;
     fitness.energy_int_accum = 0.0;
     fitness.offspring_count = 0;
     fitness.last_fitness = 0.0;
-    registry.emplace<FitnessComponent>(entity, fitness);
+    registry.emplace_or_replace<DietComponent>(entity, DietComponent{DietType::Herbivore});
 
     return entity;
 }
@@ -160,6 +170,9 @@ entt::entity SimulationFixture::spawn_plant(const Vec3& position,
 
 EnvironmentConfig create_test_env_config(std::uint32_t seed) {
     EnvironmentConfig config{};
+
+    // Tests that exercise legacy behavior can opt into the 2D soil grid explicitly.
+    config.soil_mode = SoilMode::Legacy2D;
 
     config.terrain.width_cells = 128;
     config.terrain.height_cells = 128;
@@ -349,4 +362,3 @@ std::string hash_entity_state(entt::registry& registry) {
 }
 
 }  // namespace evolution::sim::test
-

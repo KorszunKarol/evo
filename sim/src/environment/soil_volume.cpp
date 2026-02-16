@@ -5,12 +5,35 @@
 #include <array>
 #include <cmath>
 
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#endif
+
 namespace evolution::sim {
 
 SoilVolume::SoilVolume(const SoilVolumeConfig& config)
     : config_(config),
       voxels_(config.width * config.height * config.depth),
-      scratch_(config.width * config.height * config.depth) {}
+      scratch_(config.width * config.height * config.depth),
+      biome_idx_cache_(static_cast<std::size_t>(config.width * config.depth), 0u) {}
+
+void SoilVolume::precompute_biome_indices(const BiomeMap& biome_map) {
+    const std::size_t expected = static_cast<std::size_t>(config_.width * config_.depth);
+    if (biome_idx_cache_.size() != expected) {
+        biome_idx_cache_.assign(expected, 0u);
+    }
+
+    for (int z = 0; z < config_.depth; ++z) {
+        for (int x = 0; x < config_.width; ++x) {
+            const double wx = static_cast<double>(x) * config_.voxel_size;
+            const double wz = static_cast<double>(z) * config_.voxel_size;
+            const BiomeId biome = biome_map.sample(wx, wz);
+            biome_idx_cache_[static_cast<std::size_t>(z) * config_.width + static_cast<std::size_t>(x)] =
+                static_cast<std::uint8_t>(biome);
+        }
+    }
+    biome_idx_cache_valid_ = true;
+}
 
 std::size_t SoilVolume::index(int x, int y, int z) const {
     return static_cast<std::size_t>(
@@ -37,9 +60,9 @@ SoilVoxel SoilVolume::sample(const Vec3& pos) const {
     const int x0 = static_cast<int>(std::floor(gx));
     const int y0 = static_cast<int>(std::floor(gy));
     const int z0 = static_cast<int>(std::floor(gz));
-    const int x1 = x0 + 1;
-    const int y1 = y0 + 1;
-    const int z1 = z0 + 1;
+    const int x1 = std::min(x0 + 1, config_.width - 1);
+    const int y1 = std::min(y0 + 1, config_.height - 1);
+    const int z1 = std::min(z0 + 1, config_.depth - 1);
 
     const double tx = gx - x0;
     const double ty = gy - y0;
@@ -80,23 +103,37 @@ SoilVoxel SoilVolume::sample(const Vec3& pos) const {
 }
 
 void SoilVolume::diffuse(double dt) {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilVolume::diffuse");
+#endif
     const double rate = static_cast<double>(config_.diffusion_rate) * dt;
     if (rate <= 0.0) {
         return;
     }
 
-    for (int y = 1; y < config_.height - 1; ++y) {
-        for (int z = 1; z < config_.depth - 1; ++z) {
-            for (int x = 1; x < config_.width - 1; ++x) {
-                const std::size_t idx = index(x, y, z);
+    const int width = config_.width;
+    const int height = config_.height;
+    const int depth = config_.depth;
+    const std::size_t slice_stride = static_cast<std::size_t>(width) * static_cast<std::size_t>(depth);
+
+    for (int y = 1; y < height - 1; ++y) {
+        const std::size_t y_base = static_cast<std::size_t>(y) * slice_stride;
+        const std::size_t y_prev = y_base - slice_stride;
+        const std::size_t y_next = y_base + slice_stride;
+        for (int z = 1; z < depth - 1; ++z) {
+            const std::size_t z_offset = static_cast<std::size_t>(z) * static_cast<std::size_t>(width);
+            const std::size_t z_prev = z_offset - static_cast<std::size_t>(width);
+            const std::size_t z_next = z_offset + static_cast<std::size_t>(width);
+            for (int x = 1; x < width - 1; ++x) {
+                const std::size_t idx = y_base + z_offset + static_cast<std::size_t>(x);
                 const SoilVoxel& center = voxels_[idx];
-                
-                const SoilVoxel& xm = voxels_[index(x - 1, y, z)];
-                const SoilVoxel& xp = voxels_[index(x + 1, y, z)];
-                const SoilVoxel& ym = voxels_[index(x, y - 1, z)];
-                const SoilVoxel& yp = voxels_[index(x, y + 1, z)];
-                const SoilVoxel& zm = voxels_[index(x, y, z - 1)];
-                const SoilVoxel& zp = voxels_[index(x, y, z + 1)];
+
+                const SoilVoxel& xm = voxels_[idx - 1u];
+                const SoilVoxel& xp = voxels_[idx + 1u];
+                const SoilVoxel& ym = voxels_[y_prev + z_offset + static_cast<std::size_t>(x)];
+                const SoilVoxel& yp = voxels_[y_next + z_offset + static_cast<std::size_t>(x)];
+                const SoilVoxel& zm = voxels_[y_base + z_prev + static_cast<std::size_t>(x)];
+                const SoilVoxel& zp = voxels_[y_base + z_next + static_cast<std::size_t>(x)];
 
                 auto diffuse_comp = [&](float val,
                                         float vxm, float vxp,
@@ -116,18 +153,13 @@ void SoilVolume::diffuse(double dt) {
             }
         }
     }
-    
-    for (int y = 1; y < config_.height - 1; ++y) {
-        for (int z = 1; z < config_.depth - 1; ++z) {
-            for (int x = 1; x < config_.width - 1; ++x) {
-                std::size_t idx = index(x, y, z);
-                voxels_[idx] = scratch_[idx];
-            }
-        }
-    }
+    voxels_.swap(scratch_);
 }
 
 void SoilVolume::regenerate(double dt, const BiomeMap* biome_map, double climate_mult) {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilVolume::regenerate");
+#endif
     // Hardcoded baselines for now, similar to SoilGrid
     constexpr std::array<double, 4> baselines = {4.0, 5.0, 6.0, 3.0}; 
     constexpr std::array<double, 4> rates = {0.06, 0.08, 0.10, 0.04};
@@ -136,17 +168,20 @@ void SoilVolume::regenerate(double dt, const BiomeMap* biome_map, double climate
     const double def_rate = 0.05 * climate_mult;
     const float def_base = 4.0F;
 
+    if (biome_map && !biome_idx_cache_valid_) {
+        precompute_biome_indices(*biome_map);
+    }
+
     for (int z = 0; z < config_.depth; ++z) {
         for (int x = 0; x < config_.width; ++x) {
             double rate = def_rate;
             float base = def_base;
 
-            if (biome_map) {
-                double wx = static_cast<double>(x) * config_.voxel_size;
-                double wz = static_cast<double>(z) * config_.voxel_size;
-                BiomeId biome = biome_map->sample(wx, wz);
-                int idx = static_cast<int>(biome);
-                if (idx >= 0 && idx < 4) {
+            if (biome_map && biome_idx_cache_valid_ && !biome_idx_cache_.empty()) {
+                const std::size_t column_idx =
+                    static_cast<std::size_t>(z) * config_.width + static_cast<std::size_t>(x);
+                const std::size_t idx = static_cast<std::size_t>(biome_idx_cache_[column_idx]);
+                if (idx < rates.size()) {
                     rate = rates[idx] * climate_mult;
                     base = static_cast<float>(baselines[idx]);
                 }
@@ -166,6 +201,17 @@ void SoilVolume::regenerate(double dt, const BiomeMap* biome_map, double climate
             }
         }
     }
+}
+
+double SoilVolume::mean_nitrogen() const noexcept {
+    if (voxels_.empty()) {
+        return 0.0;
+    }
+    double sum = 0.0;
+    for (const auto& voxel : voxels_) {
+        sum += voxel.nitrogen;
+    }
+    return sum / static_cast<double>(voxels_.size());
 }
 
 }  // namespace evolution::sim

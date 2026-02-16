@@ -165,15 +165,34 @@ SoilGrid::SoilGrid(const SoilConfig& config)
       cell_size_(std::max(config.cell_size, 1e-3)),
       inv_cell_size_(1.0 / cell_size_),
       nutrients_(static_cast<std::size_t>(width_ * height_), config.baseline_nutrient),
-      scratch_(nutrients_) {}
+      scratch_(nutrients_),
+      biome_idx_cache_(static_cast<std::size_t>(width_ * height_), 0u) {}
+
+void SoilGrid::precompute_biome_indices(const BiomeMap& biome_map) noexcept {
+    if (biome_idx_cache_.size() != nutrients_.size()) {
+        biome_idx_cache_.assign(nutrients_.size(), 0u);
+    }
+
+    for (int z = 0; z < height_; ++z) {
+        for (int x = 0; x < width_; ++x) {
+            const double world_x = static_cast<double>(x) * cell_size_;
+            const double world_z = static_cast<double>(z) * cell_size_;
+            const BiomeId biome = biome_map.sample(world_x, world_z);
+            biome_idx_cache_[static_cast<std::size_t>(z) * width_ + static_cast<std::size_t>(x)] =
+                static_cast<std::uint8_t>(biome);
+        }
+    }
+
+    biome_idx_cache_valid_ = true;
+}
 
 float SoilGrid::sample(double x, double z) const noexcept {
     const double fx = std::clamp(x * inv_cell_size_, 0.0, static_cast<double>(width_ - 1));
     const double fz = std::clamp(z * inv_cell_size_, 0.0, static_cast<double>(height_ - 1));
     const int ix0 = static_cast<int>(std::floor(fx));
     const int iz0 = static_cast<int>(std::floor(fz));
-    const int ix1 = ix0 + 1;
-    const int iz1 = iz0 + 1;
+    const int ix1 = std::min(ix0 + 1, width_ - 1);
+    const int iz1 = std::min(iz0 + 1, height_ - 1);
     const double sx = fx - static_cast<double>(ix0);
     const double sz = fz - static_cast<double>(iz0);
     const float n00 = at(ix0, iz0);
@@ -186,24 +205,23 @@ float SoilGrid::sample(double x, double z) const noexcept {
 }
 
 void SoilGrid::diffuse(double dt) noexcept {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilGrid::diffuse");
+#endif
     const float rate = config_.diffusion_rate * static_cast<float>(dt);
     if (rate <= 0.0F) {
         return;
     }
-
-    auto clamp_index = [this](int value, int max_index) {
-        return std::clamp(value, 0, max_index);
-    };
 
     const int max_x = width_ - 1;
     const int max_z = height_ - 1;
 
     for (int z = 0; z < height_; ++z) {
         for (int x = 0; x < width_; ++x) {
-            const int left = clamp_index(x - 1, max_x);
-            const int right = clamp_index(x + 1, max_x);
-            const int down = clamp_index(z - 1, max_z);
-            const int up = clamp_index(z + 1, max_z);
+            const int left = std::clamp(x - 1, 0, max_x);
+            const int right = std::clamp(x + 1, 0, max_x);
+            const int down = std::clamp(z - 1, 0, max_z);
+            const int up = std::clamp(z + 1, 0, max_z);
 
             const float center = at(x, z);
             const float sum_neighbors = at(left, z) + at(right, z) + at(x, down) + at(x, up);
@@ -218,6 +236,9 @@ void SoilGrid::diffuse(double dt) noexcept {
 }
 
 void SoilGrid::regenerate(double dt) noexcept {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilGrid::regenerate");
+#endif
     const float regen = config_.regeneration_rate * static_cast<float>(dt);
     if (regen <= 0.0F) {
         return;
@@ -234,21 +255,28 @@ void SoilGrid::regenerate(double dt) noexcept {
 void SoilGrid::regenerate_by_biome(double dt,
                                    const BiomeMap& biome_map,
                                    const std::array<float, 4>& regen_rates,
-                                   const std::array<float, 4>& baselines,
+                                    const std::array<float, 4>& baselines,
                                    double climate_mult) noexcept {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilGrid::regenerate_by_biome");
+#endif
     const float climate_mult_f = static_cast<float>(climate_mult);
     if (climate_mult_f <= 0.0F || dt <= 0.0) {
         return;
     }
 
+    if (!biome_idx_cache_valid_) {
+        precompute_biome_indices(biome_map);
+    }
+
     for (int z = 0; z < height_; ++z) {
         for (int x = 0; x < width_; ++x) {
-            const double world_x = static_cast<double>(x) * cell_size_;
-            const double world_z = static_cast<double>(z) * cell_size_;
-            const BiomeId biome = biome_map.sample(world_x, world_z);
-            const int biome_idx = static_cast<int>(biome);
-            const float regen_rate = (biome_idx >= 0 && biome_idx < 4) ? regen_rates[biome_idx] : regen_rates[0];
-            const float baseline = (biome_idx >= 0 && biome_idx < 4) ? baselines[biome_idx] : baselines[0];
+            const std::size_t idx = static_cast<std::size_t>(z) * width_ + static_cast<std::size_t>(x);
+            const std::size_t biome_idx = biome_idx_cache_.empty()
+                                              ? 0u
+                                              : static_cast<std::size_t>(biome_idx_cache_[idx]);
+            const float regen_rate = (biome_idx < regen_rates.size()) ? regen_rates[biome_idx] : regen_rates[0];
+            const float baseline = (biome_idx < baselines.size()) ? baselines[biome_idx] : baselines[0];
 
             float& cell = at(x, z);
             const float regen = regen_rate * climate_mult_f * static_cast<float>(dt);
@@ -907,6 +935,3 @@ void update_environment_stats(entt::registry& registry) {
 }
 
 }  // namespace evolution::sim
-
-
-
