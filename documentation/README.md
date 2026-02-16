@@ -126,6 +126,7 @@ When adding new code:
 ## Runtime Contracts
 
 - Runtime interfaces and health/run metadata types live in `sim/include/evolution/sim/runtime_contracts.h`.
+- Environment interface adapters live in `sim/include/evolution/sim/environment/service_adapters.h`.
 
 ## Tooling References
 

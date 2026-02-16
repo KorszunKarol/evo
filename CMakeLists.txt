@@ -328,6 +328,7 @@ add_executable(sim_tests
     tests/genetics/test_mutation_crossover.cpp
     tests/sim/test_fitness_update.cpp
     tests/sim/test_scheduler_stages.cpp
+    tests/sim/test_runtime_contracts.cpp
     tests/sim/test_fixtures.cpp
     tests/sim/test_rng_seed_derivation.cpp
     tests/sim/test_fitness_component.cpp
