@@ -50,6 +50,9 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # GLFW
+if(UNIX AND NOT APPLE)
+    set(GLFW_USE_WAYLAND OFF CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -65,17 +68,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
-# glad loader
-FetchContent_Declare(
-    glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v0.1.36
+# OpenGL loader (offline-friendly): use GLFW bundled glad sources.
+add_library(glad STATIC
+    ${glfw_SOURCE_DIR}/deps/glad_gl.c
 )
-FetchContent_GetProperties(glad)
-if(NOT glad_POPULATED)
-    FetchContent_Populate(glad)
-endif()
-add_subdirectory(${glad_SOURCE_DIR} ${glad_BINARY_DIR})
+set_source_files_properties(${glfw_SOURCE_DIR}/deps/glad_gl.c PROPERTIES LANGUAGE CXX)
+target_include_directories(glad PUBLIC
+    ${glfw_SOURCE_DIR}/deps
+)
 
 # Dear ImGui
 FetchContent_Declare(
@@ -100,6 +100,7 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC
     ${IMGUI_SOURCE_DIR}
     ${IMGUI_SOURCE_DIR}/backends
+    ${CMAKE_SOURCE_DIR}/client/include
 )
 target_link_libraries(imgui PUBLIC glfw glad)
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLAD=1)
@@ -185,6 +186,7 @@ add_library(sim_environment
     sim/src/environment/soil_system.cpp
     sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
+    sim/src/environment/creature_spatial_index.cpp
     sim/src/environment/feeding_system.cpp
 )
 
@@ -204,8 +206,11 @@ add_library(sim_telemetry
 add_library(sim_ecology
     sim/src/metabolism_system.cpp
     sim/src/brain_inference_system.cpp
+    sim/src/adaptive_control_system.cpp
+    sim/src/perception/vision_system.cpp
     sim/src/motor_system.cpp
     sim/src/fitness_update_system.cpp
+    sim/src/population_monitor.cpp
     sim/src/species_index_system.cpp
     sim/src/reproduction_system.cpp
     sim/src/scenario.cpp
@@ -274,6 +279,9 @@ target_link_libraries(sim_app PRIVATE
 
 add_executable(render_client
     client/src/main.cpp
+    client/src/renderer/renderer_app.cpp
+    client/src/renderer/camera_controller.cpp
+    client/src/renderer/scene_extractor.cpp
 )
 
 target_link_libraries(render_client PRIVATE
@@ -282,6 +290,9 @@ target_link_libraries(render_client PRIVATE
     glad
     imgui
     glm::glm
+)
+target_include_directories(render_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/client/src
 )
 
 target_compile_options(render_client PRIVATE
@@ -342,6 +353,19 @@ add_executable(sim_tests
     tests/sim/test_scenarios.cpp
     tests/sim/test_ecs_lifecycle.cpp
     tests/sim/test_integration_invariants.cpp
+    tests/sim/test_creature_spatial_index.cpp
+    tests/sim/test_vision_system.cpp
+    tests/sim/test_contact_sense.cpp
+    tests/sim/test_physics_world_bounds.cpp
+    tests/sim/test_advanced_predation.cpp
+    tests/sim/test_population_monitor.cpp
+    tests/sim/test_density_reproduction.cpp
+    tests/sim/test_population_safety.cpp
+    tests/sim/test_population_dynamics_e2e.cpp
+    tests/sim/test_environment_bootstrap_regression.cpp
+    tests/sim/test_scenario_bootstrap_feeding.cpp
+    tests/sim/test_scaling_controls.cpp
+    tests/sim/test_adaptive_control.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE
