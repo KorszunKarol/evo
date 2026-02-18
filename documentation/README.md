@@ -7,6 +7,9 @@
 ## Architecture Documentation
 
 - [Architecture Overview](./architecture/overview.md) - High-level system design
+- [Recovery Baseline (2026-02-16)](./architecture/recovery_baseline.md) - Stabilization checkpoint and resolved failures
+- [Module Ownership](./architecture/module_ownership.md) - Ownership boundaries and review escalation
+- [Branching Playbook](./architecture/branching_playbook.md) - Lightweight protected-branch workflow without CI gates
 - [Module Documentation](./modules/) - Detailed module specifications
 - [API Reference](./api/) - Complete function signatures
 - [Data Contracts](./data-contracts/) - Inter-module communication
@@ -20,6 +23,10 @@
 - [Genome Module](./modules/genome.md) - Genome storage, operations, and RNG utilities
 - [Phenotype Module](./modules/phenotype.md) - Building ECS entities from genomes
 - [Brain Module](./modules/brain.md) - MLP and NEAT inference engines
+- [Telemetry Module](./modules/telemetry.md) - Event and rollup telemetry pipeline
+- [Reproduction Module](./modules/reproduction.md) - Mating, crossover, mutation system
+- [Species Index Module](./modules/species_index.md) - Species clustering system
+- [Scenario Module](./modules/scenario.md) - Simulation configuration and initialization
 
 ## API Reference
 
@@ -47,11 +54,16 @@
 - PhenotypeBuilder → [Phenotype Module](./modules/phenotype.md#phenotypebuilder)
 - BrainInferenceSystem → [Core Simulation Module](./modules/core_simulation.md#braininferencesystem)
 - MotorSystem → [Core Simulation Module](./modules/core_simulation.md#motorsystem)
+- ReproductionSystem → [Reproduction Module](./modules/reproduction.md#reproductionsystem)
+- SpeciesIndexSystem → [Species Index Module](./modules/species_index.md#speciesindexsystem)
+- SimulationScenario → [Scenario Module](./modules/scenario.md#simulationscenario)
 
 **By Function**:
 - `SimulationApp::tick()` → [API Reference](./api/function_reference.md#tick)
 - `Scheduler::add_system()` → [API Reference](./api/function_reference.md#add_system)
 - `PhysicsSystem::tick()` → [API Reference](./api/function_reference.md#tick-1)
+- `setup_scenario()` → [Scenario Module](./modules/scenario.md#setup_scenario)
+- `seed_initial_population()` → [Scenario Module](./modules/scenario.md#seed_initial_population)
 
 **By Data Flow**:
 - Component access → [Data Contracts](./data-contracts/inter_module_contracts.md#component-access-contracts)
@@ -60,6 +72,8 @@
 - Genome storage → [Genetics Contracts](./data-contracts/genetics.md#genome-storage-contracts)
 - Phenotype building → [Genetics Contracts](./data-contracts/genetics.md#phenotype-building-contracts)
 - Brain inference → [Genetics Contracts](./data-contracts/genetics.md#brain-inference-contracts)
+- Reproduction → [Genetics Contracts](./data-contracts/genetics.md#reproduction-contracts)
+- Species indexing → [Genetics Contracts](./data-contracts/genetics.md#species-indexing-contracts)
 
 ## Documentation Standards
 
@@ -110,3 +124,12 @@ When adding new code:
 - **Update on changes**: Modify docs when APIs change
 - **Review regularly**: Ensure accuracy and completeness
 
+## Runtime Contracts
+
+- Runtime interfaces and health/run metadata types live in `sim/include/evolution/sim/runtime_contracts.h`.
+- Environment interface adapters live in `sim/include/evolution/sim/environment/service_adapters.h`.
+
+## Tooling References
+
+- [Project Health Template](./tools/project_health.md) - Standardized health checkpoint format
+- [Windows Native Runtime Workflow](./tools/windows_native_workflow.md) - Windows build/run path with WSL as secondary tooling environment

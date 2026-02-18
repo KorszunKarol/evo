@@ -11,14 +11,24 @@ namespace evolution::sim {
 SpeciesIndexSystem::SpeciesIndexSystem(genetics::GenomeStorage& storage,
                                        const genetics::ReproConfig& config,
                                        std::size_t target_species_count,
-                                       double initial_threshold) noexcept
+                                       double initial_threshold,
+                                       double update_interval_s,
+                                       bool verbose_logs) noexcept
     : storage_(storage)
     , config_(config)
     , target_species_count_(target_species_count)
-    , threshold_(initial_threshold) {}
+    , threshold_(initial_threshold)
+    , update_interval_s_(std::max(0.0, update_interval_s))
+    , verbose_logs_(verbose_logs) {}
 
 void SpeciesIndexSystem::tick(SimulationContext& context) {
-    (void)context;
+    if (update_interval_s_ > 0.0) {
+        accumulator_ += context.fixed_dt();
+        if (accumulator_ + 1e-9 < update_interval_s_) {
+            return;
+        }
+        accumulator_ = std::fmod(accumulator_, update_interval_s_);
+    }
     UpdateClustering();
 }
 
@@ -71,7 +81,7 @@ void SpeciesIndexSystem::UpdateClustering() {
     AdjustThreshold(species_count_);
 
     // Log statistics
-    if (species_count_ > 0) {
+    if (species_count_ > 0 && verbose_logs_) {
         std::unordered_map<SpeciesId, std::size_t> species_sizes;
         for (const auto& [_, species_id] : species_map_) {
             species_sizes[species_id]++;
@@ -109,4 +119,3 @@ SpeciesId SpeciesIndexSystem::get_species(genetics::GenomeId genome_id) const no
 }
 
 }  // namespace evolution::sim
-

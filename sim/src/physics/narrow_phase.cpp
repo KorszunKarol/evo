@@ -255,8 +255,9 @@ bool collide_with_ground(entt::entity entity,
     const Vec3 center = position + collider.offset;
     const Vec3 surface_point = terrain ? Vec3{center.x, terrain->height(center.x, center.z), center.z}
                                        : Vec3{center.x, ground_y, center.z};
-    const Vec3 normal = terrain ? terrain->normal(center.x, center.z)
-                                : Vec3{0.0, 1.0, 0.0};
+    // Use a vertical support normal for terrain contacts. Slope normals in this
+    // simplified solver can inject lateral impulses and cause runaway drift.
+    const Vec3 normal{0.0, 1.0, 0.0};
 
     auto set_contact = [&](const Vec3& point, double penetration) {
         set_single_point(manifold, entity, entt::null, point, normal, penetration);
@@ -310,5 +311,4 @@ bool collide_with_ground(entt::entity entity,
 }
 
 }  // namespace evolution::sim
-
 

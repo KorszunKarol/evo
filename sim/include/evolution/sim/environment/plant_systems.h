@@ -31,17 +31,28 @@ private:
  */
 class PlantSeedingSystem final : public ISystem {
 public:
-    explicit PlantSeedingSystem(unsigned int seed = 0xC0FFEEU) noexcept;
+    struct Tuning {
+        unsigned int seed{0xC0FFEEU};
+        double update_interval_s{1.0};
+    };
+
+    PlantSeedingSystem() noexcept;
+    explicit PlantSeedingSystem(Tuning tuning) noexcept;
+    explicit PlantSeedingSystem(unsigned int seed) noexcept;
 
     void tick(SimulationContext& context) override;
 
     [[nodiscard]] std::string_view name() const noexcept override { return name_; }
 
     void reseed(unsigned int seed) noexcept { rng_.seed(seed); }
+    [[nodiscard]] double debug_seeding_multiplier() const noexcept { return pressure_multiplier_; }
 
 private:
 
     static constexpr std::string_view name_ = "plant_seeding";
+    Tuning tuning_{};
+    double pressure_multiplier_{1.0};
+    double pressure_accumulator_{0.0};
     std::mt19937 rng_;
 };
 
@@ -76,5 +87,3 @@ private:
 };
 
 }  // namespace evolution::sim
-
-

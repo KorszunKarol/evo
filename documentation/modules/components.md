@@ -683,6 +683,110 @@ struct HerbivoreTag {};
 
 **Usage**: Used with `registry.view<HerbivoreTag, FeedingIntent>()` to find feeding entities.
 
+### CarnivoreTag
+
+**Purpose**: Empty tag component marking entities that can consume other entities.
+
+**Structure**:
+```cpp
+struct CarnivoreTag {};
+```
+
+**Data Contract**:
+
+- **Read by**: FeedingSystem (for carnivore filtering)
+- **Written by**: Spawn systems
+- **Thread safety**: Not applicable (tag only)
+
+**Usage**: Used with `registry.view<CarnivoreTag, FeedingIntent, DietComponent>()` to find predators.
+
+### DietType
+
+**Purpose**: Enumerates feeding strategies for entities.
+
+**Structure**:
+```cpp
+enum class DietType : std::uint8_t {
+    Herbivore = 0,
+    Carnivore = 1
+};
+```
+
+**Data Contract**:
+
+- **Read by**: FeedingSystem
+- **Written by**: Spawn systems
+- **Thread safety**: Immutable after creation
+
+### DietComponent
+
+**Purpose**: Defines an entity's feeding behaviour.
+
+**Structure**:
+```cpp
+struct DietComponent {
+    DietType type{DietType::Herbivore};
+};
+```
+
+**Fields**:
+
+- `type`: `DietType`
+  - **Type**: Diet enum (Herbivore/Carnivore)
+  - **Default**: `DietType::Herbivore`
+  - **Usage**: Routes FeedingSystem to plant vs prey logic
+
+**Data Contract**:
+
+- **Read by**: FeedingSystem
+- **Written by**: Spawn systems
+- **Thread safety**: Not thread-safe
+
+### CombatComponent
+
+**Purpose**: Tracks predator attack cooldowns and targeting metadata.
+
+**Structure**:
+```cpp
+struct CombatComponent {
+    double attack_cooldown{1.0};
+    double attack_timer{0.0};
+    entt::entity target{entt::null};
+    double damage_dealt{0.0};
+};
+```
+
+**Fields**:
+
+- `attack_cooldown`: `double`
+  - **Type**: Cooldown duration
+  - **Units**: Seconds
+  - **Default**: `1.0`
+  - **Usage**: Minimum time between attacks
+
+- `attack_timer`: `double`
+  - **Type**: Remaining cooldown time
+  - **Units**: Seconds
+  - **Default**: `0.0`
+  - **Usage**: Decremented by FeedingSystem until ready
+
+- `target`: `entt::entity`
+  - **Type**: Target entity handle
+  - **Default**: `entt::null`
+  - **Usage**: Recorded when a predator successfully hits prey
+
+- `damage_dealt`: `double`
+  - **Type**: Cumulative damage tracking
+  - **Units**: Energy units
+  - **Default**: `0.0`
+  - **Usage**: Debug/telemetry metric for predation
+
+**Data Contract**:
+
+- **Read by**: FeedingSystem
+- **Written by**: FeedingSystem
+- **Thread safety**: Not thread-safe
+
 ### ActuationComponent
 
 **Purpose**: Pending actuation commands produced by neural controllers.
@@ -694,6 +798,7 @@ struct ActuationComponent {
     double impulse_z{0.0};   // Planar impulse along Z (N·s)
     bool jump{false};        // Jump impulse flag
     bool eat{false};         // Feeding request
+    bool attack{false};      // Attack request (carnivores)
     int update_skip{0};      // Brain-controlled throttle
 };
 ```
@@ -715,6 +820,11 @@ struct ActuationComponent {
   - **Type**: Feeding behavior request
   - **Default**: `false`
   - **Usage**: Sets `FeedingIntent::request_eat` when true
+
+- `attack`: `bool`
+  - **Type**: Predator attack request
+  - **Default**: `false`
+  - **Usage**: Enables carnivore feeding attempts
 
 - `update_skip`: `int`
   - **Type**: Brain-controlled update throttle
@@ -838,7 +948,8 @@ struct ReproductionComponent {
 - **Living Entity**: `MetabolismComponent` + `GenomeHandleComponent`
 - **Evolving Creature**: `MetabolismComponent` + `GenomeHandleComponent` + `FitnessComponent`
 - **Plant Entity**: `TransformComponent` + `PlantComponent`
-- **Herbivore Entity**: `TransformComponent` + `MetabolismComponent` + `FeedingIntent` + `HerbivoreTag`
+- **Herbivore Entity**: `TransformComponent` + `MetabolismComponent` + `FeedingIntent` + `DietComponent` + `HerbivoreTag`
+- **Carnivore Entity**: `TransformComponent` + `MetabolismComponent` + `FeedingIntent` + `DietComponent` + `CombatComponent` + `CarnivoreTag`
 - **Brain Entity**: `BrainComponent` + `ActuationComponent` (future: + sensor components)
 - **Named Entity**: Any component + `NameComponent` (optional)
 
@@ -873,14 +984,17 @@ struct ReproductionComponent {
 
 **Future**: Low energy → reduced movement speed
 
-### PlantComponent ↔ FeedingIntent ↔ MetabolismComponent
+### PlantComponent ↔ FeedingIntent ↔ MetabolismComponent ↔ DietComponent
 
-**Contract**: Feeding transfers energy from plants to herbivore metabolism.
+**Contract**: Feeding transfers energy from plants or prey depending on diet.
 
 **Data Flow**:
-- FeedingSystem reads: `PlantComponent::energy`, `FeedingIntent::reach/rate`, `MetabolismComponent::energy`
-- FeedingSystem writes: `PlantComponent::energy` (decreased), `MetabolismComponent::energy` (increased)
-- Guarantee: Energy never < 0; herbivore energy clamped to `max_energy`
+- FeedingSystem reads: `DietComponent::type`, `FeedingIntent::reach/rate`, `MetabolismComponent::energy`
+- FeedingSystem (herbivore) reads: `PlantComponent::energy`
+- FeedingSystem (carnivore) reads: `MetabolismComponent::energy` (prey)
+- FeedingSystem writes: `PlantComponent::energy` or prey `MetabolismComponent::energy` (decreased)
+- FeedingSystem writes: predator `MetabolismComponent::energy` (increased)
+- Guarantee: Energy never < 0; predator energy clamped to `max_energy`
 
 **Energy Conservation**: Energy transferred atomically; no loss during transfer.
 
@@ -889,7 +1003,7 @@ struct ReproductionComponent {
 **Contract**: Brain outputs actuation commands that drive movement.
 
 **Data Flow**:
-- BrainInferenceSystem writes: `ActuationComponent` (impulses, jump, eat)
+- BrainInferenceSystem writes: `ActuationComponent` (impulses, jump, eat, attack)
 - MotorSystem reads: `ActuationComponent`
 - MotorSystem writes: `KinematicsComponent::accumulated_force` (applies impulses)
 - MotorSystem resets: `ActuationComponent` (cleared after application)
@@ -939,4 +1053,3 @@ struct ReproductionComponent {
 - [Physics System Module](./physics_system.md) - Component usage example
 - [Environment Module](./environment.md) - Plant and feeding component usage
 - [Math Types](./math_types.md) - Vec3 type used by components
-

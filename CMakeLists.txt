@@ -5,6 +5,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    set(PROJECT_WARNING_FLAGS /W4 /permissive-)
+    set(PROJECT_COMMON_SUPPRESSIONS /wd4100) # unreferenced formal parameter
+    set(PROJECT_RENDER_SUPPRESSIONS "")
+else()
+    set(PROJECT_WARNING_FLAGS -Wall -Wextra -Wpedantic)
+    set(PROJECT_COMMON_SUPPRESSIONS -Wno-unused-parameter)
+    set(PROJECT_RENDER_SUPPRESSIONS -Wno-volatile)
+endif()
+
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -50,6 +60,9 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # GLFW
+if(UNIX AND NOT APPLE)
+    set(GLFW_USE_WAYLAND OFF CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -65,17 +78,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
-# glad loader
-FetchContent_Declare(
-    glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v0.1.36
+# OpenGL loader (offline-friendly): use GLFW bundled glad sources.
+add_library(glad STATIC
+    ${glfw_SOURCE_DIR}/deps/glad_gl.c
 )
-FetchContent_GetProperties(glad)
-if(NOT glad_POPULATED)
-    FetchContent_Populate(glad)
-endif()
-add_subdirectory(${glad_SOURCE_DIR} ${glad_BINARY_DIR})
+set_source_files_properties(${glfw_SOURCE_DIR}/deps/glad_gl.c PROPERTIES LANGUAGE CXX)
+target_include_directories(glad PUBLIC
+    ${glfw_SOURCE_DIR}/deps
+)
 
 # Dear ImGui
 FetchContent_Declare(
@@ -100,6 +110,7 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC
     ${IMGUI_SOURCE_DIR}
     ${IMGUI_SOURCE_DIR}/backends
+    ${CMAKE_SOURCE_DIR}/client/include
 )
 target_link_libraries(imgui PUBLIC glfw glad)
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLAD=1)
@@ -169,42 +180,102 @@ target_link_libraries(sim_genetics PUBLIC
 )
 
 target_compile_options(sim_genetics PRIVATE
-    -Wall -Wextra -Wpedantic
+    ${PROJECT_WARNING_FLAGS}
 )
 add_dependencies(sim_genetics genome_schema_codegen)
 
-# Simulation library
-add_library(sim_core
+# Modular simulation libraries
+add_library(sim_runtime
     sim/src/scheduler.cpp
     sim/src/simulation_app.cpp
-    sim/src/physics_system.cpp
-    sim/src/metabolism_system.cpp
-    sim/src/brain_inference_system.cpp
-    sim/src/motor_system.cpp
-    sim/src/stats_system.cpp
+)
+
+add_library(sim_environment
     sim/src/environment/environment.cpp
     sim/src/environment/environment_bootstrap.cpp
     sim/src/environment/soil_system.cpp
+    sim/src/environment/soil_volume.cpp
     sim/src/environment/plant_systems.cpp
+    sim/src/environment/creature_spatial_index.cpp
     sim/src/environment/feeding_system.cpp
-    sim/src/fitness_update_system.cpp
+)
+
+add_library(sim_physics
+    sim/src/physics_system.cpp
     sim/src/physics/broad_phase.cpp
     sim/src/physics/narrow_phase.cpp
     sim/src/physics/solver.cpp
     sim/src/physics/simple_backend.cpp
+)
+
+add_library(sim_telemetry
+    sim/src/stats_system.cpp
+    sim/src/telemetry/telemetry_system.cpp
+)
+
+add_library(sim_ecology
+    sim/src/metabolism_system.cpp
+    sim/src/brain_inference_system.cpp
+    sim/src/adaptive_control_system.cpp
+    sim/src/perception/vision_system.cpp
+    sim/src/motor_system.cpp
+    sim/src/fitness_update_system.cpp
+    sim/src/population_monitor.cpp
     sim/src/species_index_system.cpp
     sim/src/reproduction_system.cpp
     sim/src/scenario.cpp
 )
 
-target_include_directories(sim_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/sim/include
+# Compatibility aggregation target
+add_library(sim_core INTERFACE)
+
+target_include_directories(sim_runtime PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_environment PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_physics PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_telemetry PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+target_include_directories(sim_ecology PUBLIC ${CMAKE_SOURCE_DIR}/sim/include)
+
+target_link_libraries(sim_runtime PUBLIC
+    EnTT::EnTT
+    spdlog::spdlog
 )
 
-target_link_libraries(sim_core PUBLIC
+target_link_libraries(sim_environment PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_physics PUBLIC
+    sim_runtime
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_telemetry PUBLIC
+    sim_runtime
+    sim_environment
     sim_genetics
     EnTT::EnTT
     spdlog::spdlog
+)
+
+target_link_libraries(sim_ecology PUBLIC
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_genetics
+    EnTT::EnTT
+    spdlog::spdlog
+)
+
+target_link_libraries(sim_core INTERFACE
+    sim_runtime
+    sim_environment
+    sim_physics
+    sim_telemetry
+    sim_ecology
 )
 
 # Main executable
@@ -218,6 +289,9 @@ target_link_libraries(sim_app PRIVATE
 
 add_executable(render_client
     client/src/main.cpp
+    client/src/renderer/renderer_app.cpp
+    client/src/renderer/camera_controller.cpp
+    client/src/renderer/scene_extractor.cpp
 )
 
 target_link_libraries(render_client PRIVATE
@@ -227,20 +301,39 @@ target_link_libraries(render_client PRIVATE
     imgui
     glm::glm
 )
+target_include_directories(render_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/client/src
+)
 
 target_compile_options(render_client PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-volatile
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_RENDER_SUPPRESSIONS}
 )
 
 # Compiler warnings
-target_compile_options(sim_core PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+target_compile_options(sim_runtime PRIVATE
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
+)
+target_compile_options(sim_environment PRIVATE
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
+)
+target_compile_options(sim_physics PRIVATE
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
+)
+target_compile_options(sim_telemetry PRIVATE
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
+)
+target_compile_options(sim_ecology PRIVATE
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 
 target_compile_options(sim_app PRIVATE
-    -Wall -Wextra -Wpedantic
+    ${PROJECT_WARNING_FLAGS}
 )
 
 # Debug symbols even in Release
@@ -255,6 +348,8 @@ add_executable(sim_tests
     tests/genetics/test_compatibility_distance.cpp
     tests/genetics/test_mutation_crossover.cpp
     tests/sim/test_fitness_update.cpp
+    tests/sim/test_scheduler_stages.cpp
+    tests/sim/test_runtime_contracts.cpp
     tests/sim/test_fixtures.cpp
     tests/sim/test_rng_seed_derivation.cpp
     tests/sim/test_fitness_component.cpp
@@ -263,7 +358,24 @@ add_executable(sim_tests
     tests/sim/test_plant_species_mapping.cpp
     tests/sim/test_reproduction_determinism.cpp
     tests/sim/test_integration_system_ordering.cpp
+    tests/sim/test_telemetry.cpp
     tests/sim/test_performance_cadence.cpp
+    tests/sim/test_scenarios.cpp
+    tests/sim/test_ecs_lifecycle.cpp
+    tests/sim/test_integration_invariants.cpp
+    tests/sim/test_creature_spatial_index.cpp
+    tests/sim/test_vision_system.cpp
+    tests/sim/test_contact_sense.cpp
+    tests/sim/test_physics_world_bounds.cpp
+    tests/sim/test_advanced_predation.cpp
+    tests/sim/test_population_monitor.cpp
+    tests/sim/test_density_reproduction.cpp
+    tests/sim/test_population_safety.cpp
+    tests/sim/test_population_dynamics_e2e.cpp
+    tests/sim/test_environment_bootstrap_regression.cpp
+    tests/sim/test_scenario_bootstrap_feeding.cpp
+    tests/sim/test_scaling_controls.cpp
+    tests/sim/test_adaptive_control.cpp
 )
 
 target_link_libraries(sim_tests PRIVATE
@@ -271,8 +383,25 @@ target_link_libraries(sim_tests PRIVATE
     GTest::gtest_main
 )
 
-target_compile_options(sim_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(sim_tests PRIVATE ${PROJECT_WARNING_FLAGS})
 
 include(GoogleTest)
 gtest_discover_tests(sim_tests)
 
+# Test categories for local development workflows
+# Use ctest -R <pattern> to run specific test groups
+#
+# Smoke tests (fast sanity checks):
+#   ctest --test-dir build -R "Mutation.Determinism|Crossover.Determinism|RngSeedDerivation.DeterministicSameInputs|IntegrationSystemOrdering.DeterministicRun" --output-on-failure
+#
+# Determinism tests:
+#   ctest --test-dir build -R "Determinism|RngSeedDerivation|SpeciesClustering.(DeterministicSameGenomes|ReproducibleAcrossRuns)|BiomeMap.DeterministicSameSeed|WaterMap.DeterministicSameSeed" --output-on-failure
+#
+# Integration tests (cross-system):
+#   ctest --test-dir build -R "IntegrationSystemOrdering|BiomeWaterIntegration|PlantSpeciesMapping" --output-on-failure
+#
+# Performance tests:
+#   ctest --test-dir build -R "PerformanceCadence" --output-on-failure
+#
+# Run all tests:
+#   ctest --test-dir build --output-on-failure

@@ -8,12 +8,21 @@ namespace evolution::genetics {
 
 namespace {
 
+constexpr double kSignalAbsClamp = 1.0e3;
+
 [[nodiscard]] std::size_t LayerWeightCount(std::size_t inputs, std::size_t outputs) noexcept {
     return inputs * outputs;
 }
 
+[[nodiscard]] double SanitizeSignal(double value) noexcept {
+    if (!std::isfinite(value)) {
+        return 0.0;
+    }
+    return std::clamp(value, -kSignalAbsClamp, kSignalAbsClamp);
+}
+
 [[nodiscard]] double Activate(double x) noexcept {
-    return std::tanh(x);
+    return std::tanh(SanitizeSignal(x));
 }
 
 }  // namespace
@@ -33,7 +42,7 @@ void BrainMlp::Evaluate(const evolution::genome::MLP& mlp,
     std::vector<double> layer_input;
     layer_input.reserve(static_cast<std::size_t>(mlp.input_count()));
     for (std::size_t i = 0; i < static_cast<std::size_t>(mlp.input_count()); ++i) {
-        layer_input.push_back(i < inputs.size() ? inputs[i] : 0.0);
+        layer_input.push_back(SanitizeSignal(i < inputs.size() ? inputs[i] : 0.0));
     }
 
     std::vector<double> layer_output;
@@ -47,12 +56,14 @@ void BrainMlp::Evaluate(const evolution::genome::MLP& mlp,
             layer_output.assign(width, 0.0);
 
             for (std::size_t neuron = 0; neuron < width; ++neuron) {
-                double sum = biases->Get(static_cast<std::size_t>(bias_offset + neuron));
+                double sum = SanitizeSignal(biases->Get(static_cast<std::size_t>(bias_offset + neuron)));
                 for (std::size_t input_idx = 0; input_idx < previous_width; ++input_idx) {
                     const std::size_t index = weight_offset + neuron * previous_width + input_idx;
-                    sum += layer_input[input_idx] * weights->Get(static_cast<std::size_t>(index));
+                    const double weight =
+                        SanitizeSignal(weights->Get(static_cast<std::size_t>(index)));
+                    sum = SanitizeSignal(sum + layer_input[input_idx] * weight);
                 }
-                layer_output[neuron] = Activate(sum);
+                layer_output[neuron] = SanitizeSignal(Activate(sum));
             }
 
             weight_offset += LayerWeightCount(previous_width, width);
@@ -69,17 +80,17 @@ void BrainMlp::Evaluate(const evolution::genome::MLP& mlp,
     layer_output.assign(output_count, 0.0);
 
     for (std::size_t neuron = 0; neuron < output_count; ++neuron) {
-        double sum = biases->Get(static_cast<std::size_t>(bias_offset + neuron));
+        double sum = SanitizeSignal(biases->Get(static_cast<std::size_t>(bias_offset + neuron)));
         for (std::size_t input_idx = 0; input_idx < previous_width; ++input_idx) {
             const std::size_t index = weight_offset + neuron * previous_width + input_idx;
-            sum += layer_input[input_idx] * weights->Get(static_cast<std::size_t>(index));
+            const double weight = SanitizeSignal(weights->Get(static_cast<std::size_t>(index)));
+            sum = SanitizeSignal(sum + layer_input[input_idx] * weight);
         }
-        layer_output[neuron] = Activate(sum);
+        layer_output[neuron] = SanitizeSignal(Activate(sum));
     }
 
     std::copy(layer_output.begin(), layer_output.end(), outputs.begin());
 }
 
 }  // namespace evolution::genetics
-
 

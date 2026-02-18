@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <entt/entt.hpp>
+
 #include "evolution/sim/math_types.h"
 
 namespace evolution::sim {
@@ -194,10 +196,86 @@ struct FeedingIntent {
     double rate{6.0};
 };
 
-///
-/// @brief Empty tag component marking herbivorous entities.
-///
+/**
+ * @brief Empty tag component marking herbivorous entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Used for view-based filtering in feeding systems.
+ * @warning Tags must be paired with compatible feeding components.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
 struct HerbivoreTag {};
+
+/**
+ * @brief Empty tag component marking carnivorous entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Enables predator-prey targeting rules in feeding systems.
+ * @warning Ensure carnivores also carry CombatComponent for cooldown tracking.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct CarnivoreTag {};
+
+/**
+ * @brief Enumerates supported diet types for entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Used by FeedingSystem to select plant vs prey sources.
+ * @warning Ensure matching tags/components align with this setting.
+ * @threadsafe @threadsafe Read-only enum.
+ */
+enum class DietType : std::uint8_t {
+    Herbivore = 0, ///< Consumes plants.
+    Carnivore = 1  ///< Consumes other entities.
+};
+
+/**
+ * @brief Defines the feeding behaviour of an entity.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note FeedingSystem reads this to branch herbivore/carnivore logic.
+ * @warning Keep type consistent with any tag components present.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct DietComponent {
+    /// @brief The primary diet type.
+    DietType type{DietType::Herbivore};
+};
+
+/**
+ * @brief Combat state for predator entities.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1).
+ * @note Tracks per-entity cooldown and active target selection.
+ * @warning Cooldown timers should be advanced by the feeding system only.
+ * @threadsafe @notthreadsafe Registry writes require synchronization.
+ */
+struct CombatComponent {
+    /// @brief Duration between attack attempts (seconds).
+    double attack_cooldown{1.0};
+    /// @brief Time remaining before next attack is permitted (seconds).
+    double attack_timer{0.0};
+    /// @brief Current attack target entity handle.
+    entt::entity target{entt::null};
+    /// @brief Total damage dealt during current pursuit.
+    double damage_dealt{0.0};
+    /// @brief Base attack power in damage-per-second units.
+    double attack_power{12.0};
+    /// @brief Maximum distance at which attacks can connect (meters).
+    double attack_reach{1.5};
+    /// @brief Fraction of prey energy converted to predator energy on kill.
+    double conversion_efficiency{0.65};
+};
 
 ///
 /// @brief Tracks the energetic state of an entity.
@@ -211,6 +289,90 @@ struct MetabolismComponent {
     double max_energy{100.0};
     /// @brief Basal metabolic consumption per second.
     double basal_rate{1.0};
+};
+
+///
+/// @brief Heading vector used by directional senses (vision, threat bearing).
+///
+/// @note Represents a normalized planar direction in XZ space.
+struct HeadingComponent {
+    /// @brief Unit forward direction in world-space XZ projection.
+    Vec3 forward{1.0, 0.0, 0.0};
+};
+
+///
+/// @brief Coarse classification for vision ray hits.
+///
+enum class VisionHitType : std::uint8_t {
+    Nothing = 0,
+    Plant = 1,
+    Herbivore = 2,
+    Carnivore = 3,
+    Terrain = 4,
+};
+
+///
+/// @brief Single vision ray sample generated each tick.
+///
+struct VisionRaySample {
+    double distance_normalized{1.0};
+    VisionHitType hit_type{VisionHitType::Nothing};
+    double hit_energy_fraction{0.0};
+};
+
+///
+/// @brief Vision sensor configuration derived from phenotype/genome traits.
+///
+struct VisionComponent {
+    double fov_degrees{120.0};
+    std::uint32_t num_rays{8};
+    double max_range{15.0};
+    double eye_height_offset{0.3};
+};
+
+///
+/// @brief Per-tick output of the vision system.
+///
+/// @note `buffer` stores packed triples [distance_norm, hit_type_norm, hit_energy] per ray.
+struct VisionResult {
+    std::vector<VisionRaySample> rays{};
+    std::vector<double> buffer{};
+};
+
+///
+/// @brief Aggregated collision sense updated from physics contact events.
+///
+struct ContactSenseComponent {
+    std::uint32_t contact_count{0};
+    Vec3 contact_normal_sum{0.0, 0.0, 0.0};
+    double contact_force_magnitude{0.0};
+};
+
+///
+/// @brief Predation pursuit state for carnivores.
+///
+struct PursuitComponent {
+    entt::entity target_entity{entt::null};
+    double pursuit_time{0.0};
+    double max_pursuit_time{5.0};
+    double engage_distance{10.0};
+};
+
+///
+/// @brief Health pool used by combat/predation resolution.
+///
+struct HealthComponent {
+    double health{100.0};
+    double max_health{100.0};
+    double regen_rate{0.0};
+};
+
+///
+/// @brief Threat signal applied to prey when targeted by predators.
+///
+struct ThreatComponent {
+    entt::entity attacker_entity{entt::null};
+    Vec3 threat_direction{0.0, 0.0, 0.0};
 };
 
 /**
@@ -272,6 +434,8 @@ struct ActuationComponent {
     bool jump{false};
     /// @brief Request to perform feeding behaviour if available.
     bool eat{false};
+    /// @brief Request to attack nearby prey (carnivores only).
+    bool attack{false};
     /// @brief Brain-controlled throttle for skipping updates (frames).
     int update_skip{0};
 };
@@ -355,6 +519,14 @@ struct ReproductionComponent {
     double mate_radius{3.0};
     /// @brief Minimum energy required to initiate reproduction.
     double energy_threshold{120.0};
+    /// @brief Multiplicative sensitivity to local density pressure.
+    double density_sensitivity{0.8};
+    /// @brief Ideal local creature count before reproduction is penalized.
+    double ideal_local_density{6.0};
+    /// @brief Radius in meters used for local density query.
+    double density_query_radius{4.0};
+    /// @brief Pressure threshold above which reproduction is fully blocked.
+    double critical_density_pressure{3.0};
 };
 
 }  // namespace evolution::sim

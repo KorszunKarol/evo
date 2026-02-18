@@ -50,7 +50,9 @@ public:
     explicit SpeciesIndexSystem(genetics::GenomeStorage& storage,
                                  const genetics::ReproConfig& config,
                                  std::size_t target_species_count = 10,
-                                 double initial_threshold = 3.0) noexcept;
+                                 double initial_threshold = 3.0,
+                                 double update_interval_s = 0.0,
+                                 bool verbose_logs = false) noexcept;
 
     /**
      * @brief Update species assignments for all genomes.
@@ -121,10 +123,12 @@ private:
     genetics::ReproConfig config_;
     std::size_t target_species_count_;
     double threshold_;
+    double update_interval_s_{0.0};
+    double accumulator_{0.0};
+    bool verbose_logs_{false};
     std::size_t species_count_{0};
     std::unordered_map<genetics::GenomeId, SpeciesId> species_map_{};
     std::vector<genetics::GenomeId> genome_list_{};
 };
 
 }  // namespace evolution::sim
-

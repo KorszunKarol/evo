@@ -103,7 +103,8 @@ private:
         entt::registry& registry,
         entt::entity parent_a,
         entt::entity parent_b,
-        std::uint64_t seed) const;
+        std::uint64_t seed,
+        double sim_time) const;
 
     static constexpr std::string_view name_ = "reproduction";
     genetics::GenomeStorage& storage_;
@@ -116,4 +117,3 @@ private:
 };
 
 }  // namespace evolution::sim
-
