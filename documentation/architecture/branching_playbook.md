@@ -4,7 +4,6 @@ This repository now uses a lightweight, PR-driven flow without CI gates.
 
 ## Protected Branches
 - `master`
-- `feature/tracy-profiler` (integration branch during stabilization)
 
 Protection settings:
 - no required status checks
@@ -15,14 +14,14 @@ Protection settings:
 
 ## Daily Workflow
 1. Start from integration branch:
-   - `git checkout feature/tracy-profiler`
+   - `git checkout master`
    - `git pull --rebase`
 2. Create a short-lived branch:
    - `git checkout -b fix/<topic>`
 3. Implement and run local checks:
    - `cmake --build build`
    - `ctest --test-dir build --output-on-failure`
-4. Open PR into `feature/tracy-profiler`.
+4. Open PR into `master`.
 5. Merge only after review.
 
 ## Branch Debt Cleanup
@@ -34,5 +33,5 @@ Protection settings:
   - `branch_backup_2026_02_16_*`
 
 ## Merge-Up Strategy
-- Periodically merge `feature/tracy-profiler` into `master` in controlled batches.
+- Keep `master` as the single integration baseline.
 - Avoid long-lived feature branches with large unresolved divergence.

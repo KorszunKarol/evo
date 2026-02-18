@@ -132,3 +132,4 @@ When adding new code:
 ## Tooling References
 
 - [Project Health Template](./tools/project_health.md) - Standardized health checkpoint format
+- [Windows Native Runtime Workflow](./tools/windows_native_workflow.md) - Windows build/run path with WSL as secondary tooling environment

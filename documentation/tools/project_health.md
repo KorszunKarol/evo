@@ -22,6 +22,8 @@ Use `tools/salvage_stash.sh --apply` to materialize stashes into salvage branche
 - Build command result:
 - Full test run result:
 - Failing tests (if any):
+- Windows build command result (optional):
+- Windows test run result (optional):
 
 ## Risks
 - Crash risk:

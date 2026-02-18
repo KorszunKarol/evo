@@ -1,5 +1,7 @@
 # Recovery Baseline (2026-02-16)
 
+This document is a historical checkpoint from the 2026-02-16 stabilization effort.
+
 ## Baseline Branch
 - Integration baseline during recovery: `feature/tracy-profiler`
 - Active recovery implementation branch: `stabilization/recovery-2026-02-16`
