@@ -137,6 +137,10 @@ entt::entity SimulationFixture::spawn_herbivore(const Vec3& position,
     fitness.offspring_count = 0;
     fitness.last_fitness = 0.0;
     registry.emplace_or_replace<DietComponent>(entity, DietComponent{DietType::Herbivore});
+    registry.emplace_or_replace<HerbivoreTag>(entity);
+    registry.remove<CarnivoreTag>(entity);
+    registry.remove<CombatComponent>(entity);
+    registry.remove<PursuitComponent>(entity);
 
     return entity;
 }
