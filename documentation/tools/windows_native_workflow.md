@@ -13,7 +13,7 @@ WSL remains the preferred environment for coding agents and Linux tooling.
 ## One-Time Setup (Windows 11)
 
 1. Install Visual Studio 2022 with C++ desktop tools.
-2. Install CMake and Ninja (or ensure they are on `PATH`).
+2. Install CMake. Install Ninja for the preferred fast path.
 3. Install current NVIDIA graphics driver.
 4. Open **Developer PowerShell for VS 2022** in `C:\dev\evolution`.
 
@@ -23,6 +23,11 @@ WSL remains the preferred environment for coding agents and Linux tooling.
 .\tools\windows\bootstrap.ps1
 .\tools\windows\configure.ps1 -BuildDir build-win -BuildType RelWithDebInfo
 ```
+
+`configure.ps1` auto-selects generator:
+
+- `Ninja` when available
+- fallback: `Visual Studio 17 2022` when Ninja is unavailable
 
 ## Build + Test
 
