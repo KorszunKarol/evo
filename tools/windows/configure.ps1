@@ -3,7 +3,7 @@ param(
     [string]$BuildDir = 'build-win',
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$BuildType = 'RelWithDebInfo',
-    [ValidateSet('auto', 'Ninja', 'Visual Studio 17 2022')]
+    [ValidateSet('auto', 'Ninja', 'Visual Studio 17 2022', 'NMake Makefiles')]
     [string]$Generator = 'auto'
 )
 
@@ -24,6 +24,18 @@ function Get-VsInstallPath {
     return $path.Trim()
 }
 
+function Get-VsDevCmdPath {
+    $installPath = Get-VsInstallPath
+    if ([string]::IsNullOrWhiteSpace($installPath)) {
+        return $null
+    }
+    $path = Join-Path $installPath 'Common7\Tools\VsDevCmd.bat'
+    if (Test-Path $path) {
+        return $path
+    }
+    return $null
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string[]]$CommandArgs,
@@ -36,12 +48,29 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-VsDevCmdCmakeConfigure {
+    param(
+        [Parameter(Mandatory = $true)][string]$VsDevCmdPath,
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$BuildPath,
+        [Parameter(Mandatory = $true)][string]$BuildType
+    )
+
+    $cmd = ('call "{0}" -arch=x64 && cmake -S "{1}" -B "{2}" -G "NMake Makefiles" -DCMAKE_BUILD_TYPE={3}' -f `
+        $VsDevCmdPath, $RepoRoot, $BuildPath, $BuildType)
+    cmd.exe /d /c $cmd
+    if ($LASTEXITCODE -ne 0) {
+        throw "cmake configure (NMake + VsDevCmd) failed with exit code $LASTEXITCODE"
+    }
+}
+
 $resolvedGenerator = $Generator
 if ($Generator -eq 'auto') {
     if (Get-Command ninja -ErrorAction SilentlyContinue) {
         $resolvedGenerator = 'Ninja'
     } elseif (Get-VsInstallPath) {
-        $resolvedGenerator = 'Visual Studio 17 2022'
+        # Prefer NMake in auto mode because it reliably inherits SDK/lib paths from VsDevCmd.
+        $resolvedGenerator = 'NMake Makefiles'
     } else {
         throw "No supported generator detected. Install Ninja or Visual Studio 2022 C++ tools."
     }
@@ -60,11 +89,17 @@ if ($resolvedGenerator -eq 'Ninja') {
         '-G', 'Ninja',
         "-DCMAKE_BUILD_TYPE=$BuildType"
     )
-} else {
+} elseif ($resolvedGenerator -eq 'Visual Studio 17 2022') {
     Invoke-Checked -Description 'cmake configure (Visual Studio)' -CommandArgs @(
         '-S', $repoRoot,
         '-B', $buildPath,
         '-G', 'Visual Studio 17 2022',
         '-A', 'x64'
     )
+} else {
+    $vsDevCmd = Get-VsDevCmdPath
+    if ([string]::IsNullOrWhiteSpace($vsDevCmd)) {
+        throw "VsDevCmd.bat not found. Install Visual Studio 2022 Build Tools."
+    }
+    Invoke-VsDevCmdCmakeConfigure -VsDevCmdPath $vsDevCmd -RepoRoot $repoRoot -BuildPath $buildPath -BuildType $BuildType
 }

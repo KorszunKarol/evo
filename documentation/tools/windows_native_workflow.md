@@ -27,7 +27,8 @@ WSL remains the preferred environment for coding agents and Linux tooling.
 `configure.ps1` auto-selects generator:
 
 - `Ninja` when available
-- fallback: `Visual Studio 17 2022` when Ninja is unavailable
+- fallback: `NMake Makefiles` via `VsDevCmd` when Ninja is unavailable
+- optional explicit mode: `Visual Studio 17 2022`
 
 ## Build + Test
 
