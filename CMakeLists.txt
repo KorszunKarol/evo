@@ -5,6 +5,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    set(PROJECT_WARNING_FLAGS /W4 /permissive-)
+    set(PROJECT_COMMON_SUPPRESSIONS /wd4100) # unreferenced formal parameter
+    set(PROJECT_RENDER_SUPPRESSIONS "")
+else()
+    set(PROJECT_WARNING_FLAGS -Wall -Wextra -Wpedantic)
+    set(PROJECT_COMMON_SUPPRESSIONS -Wno-unused-parameter)
+    set(PROJECT_RENDER_SUPPRESSIONS -Wno-volatile)
+endif()
+
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -170,7 +180,7 @@ target_link_libraries(sim_genetics PUBLIC
 )
 
 target_compile_options(sim_genetics PRIVATE
-    -Wall -Wextra -Wpedantic
+    ${PROJECT_WARNING_FLAGS}
 )
 add_dependencies(sim_genetics genome_schema_codegen)
 
@@ -296,34 +306,34 @@ target_include_directories(render_client PRIVATE
 )
 
 target_compile_options(render_client PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-volatile
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_RENDER_SUPPRESSIONS}
 )
 
 # Compiler warnings
 target_compile_options(sim_runtime PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 target_compile_options(sim_environment PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 target_compile_options(sim_physics PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 target_compile_options(sim_telemetry PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 target_compile_options(sim_ecology PRIVATE
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter  # Common in callback-heavy code
+    ${PROJECT_WARNING_FLAGS}
+    ${PROJECT_COMMON_SUPPRESSIONS}  # Common in callback-heavy code
 )
 
 target_compile_options(sim_app PRIVATE
-    -Wall -Wextra -Wpedantic
+    ${PROJECT_WARNING_FLAGS}
 )
 
 # Debug symbols even in Release
@@ -373,7 +383,7 @@ target_link_libraries(sim_tests PRIVATE
     GTest::gtest_main
 )
 
-target_compile_options(sim_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(sim_tests PRIVATE ${PROJECT_WARNING_FLAGS})
 
 include(GoogleTest)
 gtest_discover_tests(sim_tests)

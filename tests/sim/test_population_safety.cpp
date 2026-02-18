@@ -157,5 +157,6 @@ TEST(PopulationSafety, RescueAndCullEventsAreTelemetryLogged) {
     EXPECT_TRUE(saw_rescue);
     EXPECT_TRUE(saw_cull);
 
+    in.close();
     std::filesystem::remove_all(temp_dir);
 }

@@ -423,7 +423,7 @@ evolution::genome::GenomeT crossover(const evolution::genome::GenomeT& a,
 
     // Hotspots: merge from both parents (up to limit)
     if (!fitter.hotspots.empty() || !other.hotspots.empty()) {
-        child.hotspots.reserve(std::min(fitter.hotspots.size() + other.hotspots.size(), 5UL));
+        child.hotspots.reserve(std::min(fitter.hotspots.size() + other.hotspots.size(), static_cast<size_t>(5)));
         for (const auto h : fitter.hotspots) {
             child.hotspots.push_back(h);
         }

@@ -41,6 +41,7 @@ TEST(TelemetrySystem, WritesEventsJsonl) {
     EXPECT_NE(line.find("\"type\":\"ENTITY_SPAWN\""), std::string::npos);
     EXPECT_NE(line.find("\"run_id\":\"test_run\""), std::string::npos);
 
+    in.close();
     std::filesystem::remove_all(temp_dir);
 }
 
@@ -86,6 +87,7 @@ TEST(TelemetrySystem, WritesMovementMetrics) {
     }
 
     EXPECT_TRUE(found_movement);
+    in.close();
     std::filesystem::remove_all(temp_dir);
 }
 
@@ -121,5 +123,6 @@ TEST(TelemetrySystem, EnforcesPerSecondBudgets) {
         ++lines;
     }
     EXPECT_EQ(lines, 2U);
+    in.close();
     std::filesystem::remove_all(temp_dir);
 }
