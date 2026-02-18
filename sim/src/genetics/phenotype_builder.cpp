@@ -99,11 +99,52 @@ void ConfigureMetabolism(sim::MetabolismComponent& metabolism, const DerivedTrai
     metabolism.basal_rate = std::max(0.05, traits.basal_rate + traits.brain_cost);
 }
 
+void ConfigureFeedingIntent(sim::FeedingIntent& feeding, const DerivedTraits& traits) {
+    feeding.request_eat = true;
+    feeding.reach = std::clamp(1.2 + traits.mass * 0.15 + traits.trait_latent[0] * 0.2, 1.0, 3.0);
+    feeding.rate = std::clamp(4.0 + traits.mass * 0.6 + traits.trait_latent[1], 2.0, 14.0);
+}
+
 void ConfigureReproduction(sim::ReproductionComponent& reproduction, const DerivedTraits& traits) {
     reproduction.cooldown = std::max(5.0, traits.mass * 2.0);
     reproduction.timer = reproduction.cooldown;
     reproduction.mate_radius = std::clamp(traits.mass * 1.5, 2.0, 8.0);
     reproduction.energy_threshold = std::max(120.0, traits.mass * 100.0);
+    reproduction.density_sensitivity = std::clamp(0.9 + traits.trait_latent[6] * 0.4, 0.1, 2.0);
+    reproduction.ideal_local_density =
+        std::clamp(6.0 + traits.trait_latent[1] * 2.0 + traits.mass * 0.15, 2.0, 20.0);
+    reproduction.density_query_radius =
+        std::clamp(3.5 + traits.trait_latent[0] * 0.8 + traits.mass * 0.1, 2.0, 8.0);
+    reproduction.critical_density_pressure = 3.0;
+}
+
+void ConfigureVision(sim::VisionComponent& vision, const DerivedTraits& traits) {
+    const double latent0 = traits.trait_latent[0];
+    const double latent1 = traits.trait_latent[1];
+    const double latent6 = traits.trait_latent[6];
+    const double latent7 = traits.trait_latent[7];
+
+    vision.fov_degrees = std::clamp(120.0 + latent0 * 30.0, 70.0, 170.0);
+    const double ray_real = 10.0 + (latent7 + 1.0) * 3.0;
+    vision.num_rays = static_cast<std::uint32_t>(std::clamp(ray_real, 8.0, 16.0));
+    vision.max_range = std::clamp(12.0 + latent6 * 4.0 + latent1 * 2.0, 8.0, 20.0);
+    vision.eye_height_offset = std::clamp(0.25 + traits.mass * 0.03, 0.2, 1.2);
+}
+
+void ConfigureCombat(sim::CombatComponent& combat, const DerivedTraits& traits) {
+    const double latent0 = traits.trait_latent[0];
+    const double latent6 = traits.trait_latent[6];
+    combat.attack_cooldown = std::clamp(0.9 - latent6 * 0.2, 0.2, 1.5);
+    combat.attack_timer = 0.0;
+    combat.attack_power = std::clamp(10.0 + traits.mass * 2.0 + latent6 * 4.0, 4.0, 40.0);
+    combat.attack_reach = std::clamp(1.2 + latent0 * 0.5 + traits.mass * 0.1, 0.8, 2.5);
+    combat.conversion_efficiency = std::clamp(0.6 + latent6 * 0.15, 0.35, 0.9);
+}
+
+void ConfigureHealth(sim::HealthComponent& health, const DerivedTraits& traits) {
+    health.max_health = std::max(40.0, traits.mass * 80.0);
+    health.health = health.max_health;
+    health.regen_rate = 0.0;
 }
 
 }  // namespace
@@ -150,15 +191,24 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
 
     auto& metabolism = registry.emplace_or_replace<sim::MetabolismComponent>(entity);
     ConfigureMetabolism(metabolism, result.traits);
+    auto& feeding = registry.emplace_or_replace<sim::FeedingIntent>(entity);
+    ConfigureFeedingIntent(feeding, result.traits);
 
     registry.emplace_or_replace<sim::GenomeHandleComponent>(entity, sim::GenomeHandleComponent{id});
     registry.emplace_or_replace<sim::ActuationComponent>(entity);
 
     auto& brain = registry.emplace_or_replace<sim::BrainComponent>(entity);
     ConfigureBrainComponent(brain, *genome);
+    auto& vision = registry.emplace_or_replace<sim::VisionComponent>(entity);
+    ConfigureVision(vision, result.traits);
+    registry.emplace_or_replace<sim::VisionResult>(entity);
+    registry.emplace_or_replace<sim::HeadingComponent>(entity);
+    registry.emplace_or_replace<sim::ContactSenseComponent>(entity);
 
     auto& reproduction = registry.emplace_or_replace<sim::ReproductionComponent>(entity);
     ConfigureReproduction(reproduction, result.traits);
+    auto& health = registry.emplace_or_replace<sim::HealthComponent>(entity);
+    ConfigureHealth(health, result.traits);
 
     auto& lifecycle = registry.emplace_or_replace<sim::LifecycleComponent>(entity);
     lifecycle.age = 0.0;
@@ -204,11 +254,31 @@ PhenotypeBuildResult PhenotypeBuilder::build(GenomeId id,
     fitness.offspring_count = 0;
     fitness.last_fitness = 0.0;
 
+    const bool is_carnivore = ((id & 0x3ULL) == 0ULL);
+    if (is_carnivore) {
+        registry.emplace_or_replace<sim::CarnivoreTag>(entity);
+        registry.remove<sim::HerbivoreTag>(entity);
+        registry.emplace_or_replace<sim::DietComponent>(entity,
+                                                        sim::DietComponent{sim::DietType::Carnivore});
+        auto& combat = registry.emplace_or_replace<sim::CombatComponent>(entity);
+        ConfigureCombat(combat, result.traits);
+        registry.emplace_or_replace<sim::PursuitComponent>(entity);
+    } else {
+        registry.emplace_or_replace<sim::HerbivoreTag>(entity);
+        registry.remove<sim::CarnivoreTag>(entity);
+        registry.emplace_or_replace<sim::DietComponent>(entity,
+                                                        sim::DietComponent{sim::DietType::Herbivore});
+        registry.remove<sim::CombatComponent>(entity);
+        registry.remove<sim::PursuitComponent>(entity);
+    }
+
+    const std::size_t required_inputs = 8 + 4 + 1 + 2 + (vision.num_rays * 3);
+    brain.input_count = static_cast<std::uint32_t>(
+        std::max<std::size_t>(static_cast<std::size_t>(brain.input_count), required_inputs));
+
     result.ok = true;
     result.msg = "ok";
     return result;
 }
 
 }  // namespace evolution::genetics
-
-

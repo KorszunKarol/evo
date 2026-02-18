@@ -8,17 +8,27 @@ namespace evolution::genetics {
 
 namespace {
 
+constexpr double kSignalAbsClamp = 1.0e3;
+
+[[nodiscard]] double sanitize_signal(double value) noexcept {
+    if (!std::isfinite(value)) {
+        return 0.0;
+    }
+    return std::clamp(value, -kSignalAbsClamp, kSignalAbsClamp);
+}
+
 double ActivationFunction(evolution::genome::Activation act, double value) noexcept {
+    const double safe_value = sanitize_signal(value);
     switch (act) {
         case evolution::genome::Activation::Linear:
-            return value;
+            return safe_value;
         case evolution::genome::Activation::Relu:
-            return std::max(0.0, value);
+            return std::max(0.0, safe_value);
         case evolution::genome::Activation::Sigmoid:
-            return 1.0 / (1.0 + std::exp(-value));
+            return 1.0 / (1.0 + std::exp(-std::clamp(safe_value, -60.0, 60.0)));
         case evolution::genome::Activation::Tanh:
         default:
-            return std::tanh(value);
+            return std::tanh(safe_value);
     }
 }
 
@@ -99,7 +109,7 @@ void BrainNeat::evaluate(std::span<const double> inputs, std::span<double> outpu
     std::size_t input_written = 0;
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
         if (nodes_[i].type == evolution::genome::NodeType::Input) {
-            scratch_[i] = (input_written < inputs.size()) ? inputs[input_written] : 0.0;
+            scratch_[i] = sanitize_signal((input_written < inputs.size()) ? inputs[input_written] : 0.0);
             ++input_written;
         }
     }
@@ -111,11 +121,12 @@ void BrainNeat::evaluate(std::span<const double> inputs, std::span<double> outpu
         }
         double sum = node.bias;
         for (const auto& edge : node.incoming) {
-            const double source_value = edge.recurrent ? previous_values_[edge.source_index]
-                                                       : scratch_[edge.source_index];
-            sum += source_value * edge.weight;
+            const double source_value = sanitize_signal(edge.recurrent ? previous_values_[edge.source_index]
+                                                                       : scratch_[edge.source_index]);
+            const double safe_weight = sanitize_signal(edge.weight);
+            sum = sanitize_signal(sum + source_value * safe_weight);
         }
-        scratch_[i] = ActivationFunction(node.activation, sum);
+        scratch_[i] = sanitize_signal(ActivationFunction(node.activation, sum));
     }
 
     std::size_t out_index = 0;
@@ -123,13 +134,15 @@ void BrainNeat::evaluate(std::span<const double> inputs, std::span<double> outpu
         if (out_index >= outputs.size()) {
             break;
         }
-        outputs[out_index++] = scratch_[node_index];
+        outputs[out_index++] = sanitize_signal(scratch_[node_index]);
     }
     while (out_index < outputs.size()) {
         outputs[out_index++] = 0.0;
     }
 
-    previous_values_ = scratch_;
+    for (std::size_t i = 0; i < previous_values_.size(); ++i) {
+        previous_values_[i] = sanitize_signal(scratch_[i]);
+    }
 }
 
 void BrainNeat::reset_state() noexcept {
@@ -138,5 +151,4 @@ void BrainNeat::reset_state() noexcept {
 }
 
 }  // namespace evolution::genetics
-
 

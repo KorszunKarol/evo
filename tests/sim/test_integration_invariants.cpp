@@ -1,17 +1,28 @@
 #include <entt/entt.hpp>
-#include "test_fixtures.h"
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
+#include <vector>
+
+#include "test_fixtures.h"
+
+using namespace evolution::sim;
 using namespace evolution::sim::test;
+
+class IntegrationFixture final : public SimulationFixture {
+public:
+    void Initialize() { SetUp(); }
+};
 
 class IntegrationInvariantsTest : public ::testing::Test {
 protected:
-    SimulationFixture fixture;
+    IntegrationFixture fixture;
 };
 
 // 1. Energy Conservation
 TEST_F(IntegrationInvariantsTest, EnergyConserved) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     // Create initial population
     auto genome = fixture.create_test_genome(6000);
@@ -49,7 +60,7 @@ TEST_F(IntegrationInvariantsTest, EnergyConserved) {
 
 // 2. Population Bounds
 TEST_F(IntegrationInvariantsTest, PopulationWithinBounds) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     // Spawn entities
     auto genome = fixture.create_test_genome(7000);
@@ -79,14 +90,14 @@ TEST_F(IntegrationInvariantsTest, PopulationWithinBounds) {
 
 // 3. NaN/Inf Detection
 TEST_F(IntegrationInvariantsTest, NoNaNOrInfInComponents) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     auto genome = fixture.create_test_genome(8000);
     auto h1 = fixture.spawn_herbivore({0.0, 0.0, 0.0}, genome);
     
     // Manually inject NaN (simulates floating-point error)
     auto& registry = fixture.app().registry();
-    auto metab = registry.get<MetabolismComponent>(h1);
+    auto& metab = registry.get<MetabolismComponent>(h1);
     metab.energy = std::numeric_limits<double>::quiet_NaN();
     
     fixture.run_steps(10);
@@ -102,7 +113,7 @@ TEST_F(IntegrationInvariantsTest, NoNaNOrInfInComponents) {
 
 // 4. Negative Resources
 TEST_F(IntegrationInvariantsTest, ResourcesNonNegative) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     // Spawn entities with positive energy
     auto genome = fixture.create_test_genome(9000);
@@ -149,7 +160,7 @@ TEST_F(IntegrationInvariantsTest, ResourcesNonNegative) {
 
 // 5. Genome Consistency
 TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     // Create parents
     auto genome1 = fixture.create_test_genome(10001);
@@ -159,8 +170,8 @@ TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
     
     // Give energy for reproduction
     auto& registry = fixture.app().registry();
-    auto metab1 = registry.get<MetabolismComponent>(parent1);
-    auto metab2 = registry.get<MetabolismComponent>(parent2);
+    auto& metab1 = registry.get<MetabolismComponent>(parent1);
+    auto& metab2 = registry.get<MetabolismComponent>(parent2);
     metab1.energy = 200.0;
     metab2.energy = 200.0;
     
@@ -171,11 +182,9 @@ TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
     
     bool found_offspring = false;
     bool found_invalid_genome = false;
-    
-    auto metab_view = registry.view<MetabolismComponent, GenomeHandleComponent>();
-    metab_view.each([&](const MetabolismComponent& metab, const GenomeHandleComponent& genome) {
-        if (metab.age_seconds < 10.0 && genome.id != 0) {
-            // Likely offspring (young, different from parents)
+    auto view = registry.view<FitnessComponent, GenomeHandleComponent>();
+    view.each([&](const FitnessComponent& fitness, const GenomeHandleComponent& genome) {
+        if (fitness.age_seconds < 10.0) {
             found_offspring = true;
             if (genome.id == 0) {
                 found_invalid_genome = true;
@@ -189,7 +198,7 @@ TEST_F(IntegrationInvariantsTest, OffspringGenomesDerivedFromParents) {
 
 // 6. Species Stability
 TEST_F(IntegrationInvariantsTest, SpeciesIdsStable) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     // Create entities
     auto genome = fixture.create_test_genome(11000);
@@ -209,7 +218,7 @@ TEST_F(IntegrationInvariantsTest, SpeciesIdsStable) {
 
 // 7. Soil Regeneration Bounds
 TEST_F(IntegrationInvariantsTest, SoilNutrientsWithinValidRange) {
-    fixture.SetUp();
+    fixture.Initialize();
     
     auto snap1 = fixture.take_snapshot();
     double initial_soil = snap1.mean_soil;
@@ -225,8 +234,8 @@ TEST_F(IntegrationInvariantsTest, SoilNutrientsWithinValidRange) {
     EXPECT_LE(final_soil, 12.0) << "Soil exceeds max_nutrient";
     
     // Test determinism
-    SimulationFixture fixture2;
-    fixture2.SetUp();
+    IntegrationFixture fixture2;
+    fixture2.Initialize();
     auto genome2 = fixture2.create_test_genome(11000);
     fixture2.spawn_herbivore({0.0, 0.0, 0.0}, genome2);
     fixture2.run_steps(200);

@@ -1,5 +1,7 @@
 #include "evolution/sim/metabolism_system.h"
 
+#include "evolution/sim/population_monitor.h"
+
 namespace evolution::sim {
 
 MetabolismSystem::MetabolismSystem(bool destroy_on_zero) noexcept
@@ -35,10 +37,12 @@ void MetabolismSystem::tick(SimulationContext& context) {
     for (const auto entity : recycle_bin_) {
         if (registry.valid(entity)) {
             registry.destroy(entity);
+            if (auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+                ++counters->deaths_total;
+            }
         }
     }
 }
 
 }  // namespace evolution::sim
-
 

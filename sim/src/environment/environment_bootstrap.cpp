@@ -9,6 +9,8 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/environment/creature_spatial_index.h"
+#include "evolution/sim/environment/soil_volume.h"
 
 namespace evolution::sim {
 
@@ -46,6 +48,14 @@ namespace {
 
 void initialize_environment(entt::registry& registry, const EnvironmentConfig& config) {
     auto& ctx = registry.ctx();
+
+    // Persist the selected soil mode in the registry context for systems/tests.
+    if (!ctx.contains<SoilMode>()) {
+        ctx.emplace<SoilMode>(config.soil_mode);
+    } else {
+        ctx.erase<SoilMode>();
+        ctx.emplace<SoilMode>(config.soil_mode);
+    }
 
     // Initialize terrain first (required for biome and water maps)
     Terrain* terrain_ptr = nullptr;
@@ -85,12 +95,31 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
         ctx.emplace<WaterMap>(water_config, terrain);
     }
 
-    // Initialize soil grid
-    if (!ctx.contains<SoilGrid>()) {
-        ctx.emplace<SoilGrid>(config.soil);
-    } else {
+    // Initialize soil grid (2D legacy)
+    if (config.soil_mode == SoilMode::Legacy2D) {
+        if (!ctx.contains<SoilGrid>()) {
+            ctx.emplace<SoilGrid>(config.soil);
+        } else {
+            ctx.erase<SoilGrid>();
+            ctx.emplace<SoilGrid>(config.soil);
+        }
+    } else if (ctx.contains<SoilGrid>()) {
         ctx.erase<SoilGrid>();
-        ctx.emplace<SoilGrid>(config.soil);
+    }
+
+    // Initialize soil volume (3D)
+    SoilVolumeConfig vol_config;
+    vol_config.width = config.soil.width_cells;
+    vol_config.depth = config.soil.height_cells; // In config 'height_cells' is Z
+    vol_config.height = 16; // Default vertical depth for now
+    vol_config.voxel_size = config.soil.cell_size;
+    vol_config.diffusion_rate = config.soil.diffusion_rate;
+    
+    if (!ctx.contains<SoilVolume>()) {
+        ctx.emplace<SoilVolume>(vol_config);
+    } else {
+        ctx.erase<SoilVolume>();
+        ctx.emplace<SoilVolume>(vol_config);
     }
 
     // Initialize plant spatial index
@@ -99,6 +128,14 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
     } else {
         ctx.erase<PlantSpatialIndex>();
         ctx.emplace<PlantSpatialIndex>(config.plant_spatial_cell_size);
+    }
+
+    // Initialize creature spatial index
+    if (!ctx.contains<CreatureSpatialIndex>()) {
+        ctx.emplace<CreatureSpatialIndex>(config.plant_spatial_cell_size);
+    } else {
+        ctx.erase<CreatureSpatialIndex>();
+        ctx.emplace<CreatureSpatialIndex>(config.plant_spatial_cell_size);
     }
 
     // Initialize feeding statistics
@@ -232,5 +269,3 @@ void seed_initial_plants(entt::registry& registry, const EnvironmentConfig& conf
 }
 
 }  // namespace evolution::sim
-
-

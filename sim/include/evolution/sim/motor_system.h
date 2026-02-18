@@ -35,7 +35,7 @@ public:
      * @warning Excessive magnitudes may destabilize physics integration.
      * @threadsafe @notthreadsafe.
      */
-    explicit MotorSystem(double impulse_scale = 150.0, double jump_impulse = 250.0) noexcept;
+    explicit MotorSystem(double impulse_scale = 35.0, double jump_impulse = 90.0) noexcept;
 
     /**
      * @brief Apply forces derived from ActuationComponent and deduct energy cost.
@@ -63,10 +63,9 @@ public:
 
 private:
     static constexpr std::string_view name_ = "motor";
-    double impulse_scale_{150.0};
-    double jump_impulse_{250.0};
+    double impulse_scale_{35.0};
+    double jump_impulse_{90.0};
 };
 
 }  // namespace evolution::sim
-
 

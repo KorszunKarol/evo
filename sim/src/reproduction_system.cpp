@@ -1,16 +1,67 @@
 #include "evolution/sim/reproduction_system.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <span>
+#include <sstream>
 
 #include <entt/entt.hpp>
 #include <flatbuffers/flatbuffers.h>
 #include <spdlog/spdlog.h>
 
 #include "genome_generated.h"
+#include "evolution/genetics/trait_extraction.h"
+#include "evolution/sim/environment/creature_spatial_index.h"
+#include "evolution/sim/population_monitor.h"
+#include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
+
+namespace {
+
+std::string TraitsToJson(const std::array<double, 8>& traits) {
+    std::ostringstream oss;
+    oss << "[";
+    for (std::size_t i = 0; i < traits.size(); ++i) {
+        if (i > 0) {
+            oss << ",";
+        }
+        oss << traits[i];
+    }
+    oss << "]";
+    return oss.str();
+}
+
+[[nodiscard]] double ComputeDensityPressure(entt::registry& registry,
+                                            const CreatureSpatialIndex* index,
+                                            entt::entity entity,
+                                            const Vec3& position,
+                                            const ReproductionComponent& repro) {
+    if (index == nullptr) {
+        return 0.0;
+    }
+    std::size_t local_count = 0;
+    index->for_each_in_radius(registry, position, repro.density_query_radius, [&](entt::entity other, double) {
+        if (other != entity) {
+            ++local_count;
+        }
+    });
+
+    const double ideal = std::max(1.0, repro.ideal_local_density);
+    return std::max(0.0, (static_cast<double>(local_count) / ideal) - 1.0);
+}
+
+[[nodiscard]] double EffectiveEnergyThreshold(entt::registry& registry,
+                                              const CreatureSpatialIndex* index,
+                                              entt::entity entity,
+                                              const Vec3& position,
+                                              const ReproductionComponent& repro) {
+    const double pressure = ComputeDensityPressure(registry, index, entity, position, repro);
+    return repro.energy_threshold * (1.0 + repro.density_sensitivity * pressure);
+}
+
+}  // namespace
 
 ReproductionSystem::ReproductionSystem(genetics::GenomeStorage& storage,
                                        const genetics::ReproConfig& config,
@@ -22,6 +73,9 @@ ReproductionSystem::ReproductionSystem(genetics::GenomeStorage& storage,
 void ReproductionSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
     const double dt = context.fixed_dt();
+    auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
+    TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
+    const auto* creature_index = registry.ctx().find<CreatureSpatialIndex>();
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -35,10 +89,18 @@ void ReproductionSystem::tick(SimulationContext& context) {
     for (auto entity : view) {
         auto& repro = view.get<ReproductionComponent>(entity);
         const auto& metabolism = view.get<MetabolismComponent>(entity);
+        const auto& transform = view.get<TransformComponent>(entity);
 
         repro.timer = std::max(0.0, repro.timer - dt);
 
-        if (repro.timer <= 0.0 && metabolism.energy >= repro.energy_threshold) {
+        const double density_pressure =
+            ComputeDensityPressure(registry, creature_index, entity, transform.position, repro);
+        if (density_pressure >= repro.critical_density_pressure) {
+            continue;
+        }
+        const double effective_threshold =
+            EffectiveEnergyThreshold(registry, creature_index, entity, transform.position, repro);
+        if (repro.timer <= 0.0 && metabolism.energy >= effective_threshold) {
             ready_parents.push_back(entity);
         }
     }
@@ -68,17 +130,68 @@ void ReproductionSystem::tick(SimulationContext& context) {
                     auto mutated = genetics::mutate(std::move(*genome_obj), config_, seed);
                     const genetics::GenomeId child_id = storage_.insert(std::move(mutated));
 
-                    auto child_entity = registry.create();
-                    auto result = genetics::PhenotypeBuilder::build(child_id, registry, child_entity, storage_);
-                    if (result.ok) {
-                        auto& child_transform = registry.get<TransformComponent>(child_entity);
-                        child_transform.position = transform_a.position;
+                        auto child_entity = registry.create();
+                        auto result = genetics::PhenotypeBuilder::build(child_id, registry, child_entity, storage_);
+                        if (result.ok) {
+                            auto& child_transform = registry.get<TransformComponent>(child_entity);
+                            child_transform.position = transform_a.position;
                         auto& child_repro = registry.get<ReproductionComponent>(child_entity);
                         child_repro.timer = child_repro.cooldown;
 
                         auto& parent_metabolism = view.get<MetabolismComponent>(parent_a);
                         parent_metabolism.energy -= repro_a.energy_threshold * 0.5;
                         repro_a.timer = repro_a.cooldown;
+                        if (auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+                            ++counters->births_total;
+                        }
+
+                        if (telemetry != nullptr) {
+                            const bool force_capture = telemetry->should_capture(parent_a, 0, handle_a.id);
+
+                            std::ostringstream spawn_payload;
+                            spawn_payload << "{"
+                                         << "\"entity_id\":" << static_cast<std::uint32_t>(child_entity)
+                                         << ",\"genome_id\":" << child_id
+                                         << ",\"parent_a\":" << static_cast<std::uint32_t>(parent_a)
+                                         << ",\"asexual\":true"
+                                         << "}";
+
+                            TelemetryEvent spawn_event{
+                                TelemetryEventType::ENTITY_SPAWN,
+                                context.simulation_time(),
+                                spawn_payload.str()
+                            };
+                            telemetry->emit_event(spawn_event, force_capture);
+
+                            std::ostringstream lineage_payload;
+                            lineage_payload << "{"
+                                            << "\"child_genome_id\":" << child_id
+                                            << ",\"parent_a_genome_id\":" << handle_a.id
+                                            << ",\"asexual\":true"
+                                            << "}";
+
+                            TelemetryEvent lineage_event{
+                                TelemetryEventType::LINEAGE_LINK,
+                                context.simulation_time(),
+                                lineage_payload.str()
+                            };
+                            telemetry->emit_event(lineage_event, force_capture);
+
+                            if (const auto* genome_ptr = storage_.get(child_id)) {
+                                const auto traits = genetics::ExtractTraitVector(*genome_ptr);
+                                std::ostringstream traits_payload;
+                                traits_payload << "{"
+                                               << "\"genome_id\":" << child_id
+                                               << ",\"traits\":" << TraitsToJson(traits)
+                                               << "}";
+                                TelemetryEvent traits_event{
+                                    TelemetryEventType::GENOME_TRAITS,
+                                    context.simulation_time(),
+                                    traits_payload.str()
+                                };
+                                telemetry->emit_event(traits_event, force_capture);
+                            }
+                        }
                     }
                 }
             }
@@ -96,7 +209,11 @@ void ReproductionSystem::tick(SimulationContext& context) {
 
         for (const auto& candidate : candidates) {
             if (candidate.acceptance_prob > 0.1 && rng.next_unit() < candidate.acceptance_prob) {
-                if (AttemptReproduction(registry, parent_a, candidate.entity, rng.next_u64())) {
+                if (AttemptReproduction(registry,
+                                        parent_a,
+                                        candidate.entity,
+                                        rng.next_u64(),
+                                        context.simulation_time())) {
                     break;  // Successfully reproduced
                 }
             }
@@ -112,6 +229,7 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
 
     std::vector<CandidateMate> candidates;
     const double radius_sq = radius * radius;
+    const auto* creature_index = registry.ctx().find<CreatureSpatialIndex>();
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -128,7 +246,20 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
         const auto& transform_candidate = view.get<TransformComponent>(candidate_entity);
 
         // Check cooldown and energy
-        if (repro_candidate.timer > 0.0 || metabolism_candidate.energy < repro_candidate.energy_threshold) {
+        const double density_pressure = ComputeDensityPressure(registry,
+                                                               creature_index,
+                                                               candidate_entity,
+                                                               transform_candidate.position,
+                                                               repro_candidate);
+        if (density_pressure >= repro_candidate.critical_density_pressure) {
+            continue;
+        }
+        const double effective_threshold = EffectiveEnergyThreshold(registry,
+                                                                    creature_index,
+                                                                    candidate_entity,
+                                                                    transform_candidate.position,
+                                                                    repro_candidate);
+        if (repro_candidate.timer > 0.0 || metabolism_candidate.energy < effective_threshold) {
             continue;
         }
 
@@ -157,7 +288,7 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
         acceptance *= distance_factor;
 
         // Energy weighting: higher energy = higher acceptance
-        const double energy_factor = metabolism_candidate.energy / repro_candidate.energy_threshold;
+        const double energy_factor = metabolism_candidate.energy / std::max(1.0, effective_threshold);
         acceptance *= std::min(energy_factor, 1.5);
 
         candidates.push_back(CandidateMate{
@@ -224,7 +355,8 @@ bool ReproductionSystem::AttemptReproduction(
     entt::registry& registry,
     entt::entity parent_a,
     entt::entity parent_b,
-    std::uint64_t seed) const {
+    std::uint64_t seed,
+    double sim_time) const {
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -295,9 +427,63 @@ bool ReproductionSystem::AttemptReproduction(
     if (auto* fitness_b = registry.try_get<FitnessComponent>(parent_b)) {
         fitness_b->offspring_count++;
     }
+    if (auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+        ++counters->births_total;
+    }
+
+    if (auto* telemetry_ctx = registry.ctx().find<TelemetryContext>()) {
+        TelemetrySystem* telemetry = telemetry_ctx->system;
+        if (telemetry != nullptr) {
+            const bool force_capture = telemetry->should_capture(parent_a, 0, handle_a.id)
+                                       || telemetry->should_capture(parent_b, 0, handle_b.id);
+
+            std::ostringstream spawn_payload;
+            spawn_payload << "{"
+                         << "\"entity_id\":" << static_cast<std::uint32_t>(child_entity)
+                         << ",\"genome_id\":" << child_id
+                         << ",\"parent_a\":" << static_cast<std::uint32_t>(parent_a)
+                         << ",\"parent_b\":" << static_cast<std::uint32_t>(parent_b)
+                         << "}";
+
+            TelemetryEvent spawn_event{
+                TelemetryEventType::ENTITY_SPAWN,
+                sim_time,
+                spawn_payload.str()
+            };
+            telemetry->emit_event(spawn_event, force_capture);
+
+            std::ostringstream lineage_payload;
+            lineage_payload << "{"
+                            << "\"child_genome_id\":" << child_id
+                            << ",\"parent_a_genome_id\":" << handle_a.id
+                            << ",\"parent_b_genome_id\":" << handle_b.id
+                            << "}";
+
+            TelemetryEvent lineage_event{
+                TelemetryEventType::LINEAGE_LINK,
+                sim_time,
+                lineage_payload.str()
+            };
+            telemetry->emit_event(lineage_event, force_capture);
+
+            if (const auto* genome_ptr = storage_.get(child_id)) {
+                const auto traits = genetics::ExtractTraitVector(*genome_ptr);
+                std::ostringstream traits_payload;
+                traits_payload << "{"
+                               << "\"genome_id\":" << child_id
+                               << ",\"traits\":" << TraitsToJson(traits)
+                               << "}";
+                TelemetryEvent traits_event{
+                    TelemetryEventType::GENOME_TRAITS,
+                    sim_time,
+                    traits_payload.str()
+                };
+                telemetry->emit_event(traits_event, force_capture);
+            }
+        }
+    }
 
     return true;
 }
 
 }  // namespace evolution::sim
-

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 #include "evolution/sim/scheduler.h"
@@ -68,8 +69,11 @@ private:
     static constexpr std::string_view name_ = "stats";
     double interval_{1.0};
     double accumulator_{0.0};
+    std::uint64_t prev_births_total_{0};
+    std::uint64_t prev_deaths_total_{0};
+    std::uint64_t prev_rescues_total_{0};
+    std::uint64_t prev_culls_total_{0};
+    double prev_report_time_{0.0};
 };
 
 }  // namespace evolution::sim
-
-

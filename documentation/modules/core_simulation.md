@@ -135,14 +135,25 @@ void run_for_steps(std::size_t steps);         // Multiple timesteps
 **Purpose**: Manages ordered execution of registered systems.
 
 **Responsibilities**:
-- Store systems in registration order
+- Store systems in stage + registration order
 - Execute systems sequentially each tick
 - Provide system management interface
 
 **Public API**:
 
 ```cpp
+enum class SystemStage : std::size_t {
+    Bootstrap,
+    PrePhysics,
+    Ecology,
+    Physics,
+    Metrics,
+    PostTick,
+    Count
+};
+
 void add_system(std::unique_ptr<ISystem> system);
+void add_system(SystemStage stage, std::unique_ptr<ISystem> system);
 void tick_systems(SimulationContext& context);
 ```
 
@@ -150,9 +161,16 @@ void tick_systems(SimulationContext& context);
 
 - `add_system(std::unique_ptr<ISystem> system)`:
   - **Input**: Ownership-transferring pointer to system instance
-  - **Precondition**: `system != nullptr` (undefined behavior if null)
-  - **Postcondition**: System added to execution list
-  - **Order**: Systems execute in registration order
+  - **Precondition**: `system != nullptr`
+  - **Postcondition**: System added to default `Ecology` stage
+  - **Order**: Stage order then registration order
+  - **Thread safety**: Must be called during setup phase (single-threaded)
+
+- `add_system(SystemStage stage, std::unique_ptr<ISystem> system)`:
+  - **Input**: stage bucket + ownership-transferring system pointer
+  - **Precondition**: `system != nullptr`
+  - **Postcondition**: System added to selected stage
+  - **Order**: Stages execute in fixed order (`Bootstrap` → `PrePhysics` → `Ecology` → `Physics` → `Metrics` → `PostTick`)
   - **Thread safety**: Must be called during setup phase (single-threaded)
 
 - `tick_systems(SimulationContext& context)`:
@@ -169,19 +187,20 @@ void tick_systems(SimulationContext& context);
 
 **State Management**:
 
-- `systems_`: `std::vector<std::unique_ptr<ISystem>>`
+- `staged_systems_`: stage-indexed vectors of `std::unique_ptr<ISystem>`
   - Storage: Owns all registered systems
   - Lifetime: Systems destroyed when scheduler destroyed
-  - Order: Preserves registration order
+  - Order: Preserves insertion order within each stage
   - Capacity: Grows dynamically as systems added
 
 **Execution Model**:
 
 ```
-For each system in systems_:
-    1. Log system name (trace level)
-    2. Call system->tick(context)
-    3. Continue to next system
+For each stage in fixed stage order:
+    For each system in stage:
+        1. Log system name (trace level)
+        2. Call system->tick(context)
+        3. Continue to next system
 ```
 
 **Thread Safety**:
@@ -567,6 +586,7 @@ void tick(SimulationContext& context) override;
 
 **Data Flow**:
 - Registration: System passed to `Scheduler::add_system()` (ownership transfer)
+- Optional stage routing: `Scheduler::add_system(SystemStage, ...)`
 - Execution: `Scheduler::tick_systems()` calls `system->tick(context)`
 
 **Ownership**: `Scheduler` owns all registered systems via `unique_ptr`
@@ -663,4 +683,3 @@ Override `SimulationApp::begin_tick()` and `end_tick()` (currently private, coul
 - **Unit tests**: Test `Scheduler` with mock systems
 - **Integration tests**: Test `SimulationApp` with real systems
 - **Performance tests**: Measure tick time with varying entity counts
-

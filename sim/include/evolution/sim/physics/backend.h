@@ -30,6 +30,7 @@ public:
         Vec3 normal{0.0, 1.0, 0.0};         ///< Contact normal pointing from A to B.
         Vec3 point{0.0, 0.0, 0.0};          ///< Contact point in world coordinates.
         double penetration{0.0};            ///< Overlap depth in meters.
+        double impulse_magnitude{0.0};      ///< Approximate impulse magnitude accumulated by solver.
     };
 
     /**
@@ -111,5 +112,4 @@ public:
 };
 
 }  // namespace evolution::sim
-
 

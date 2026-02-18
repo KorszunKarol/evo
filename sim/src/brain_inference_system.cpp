@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -15,12 +16,20 @@ namespace {
 
 constexpr double kImpulseClamp = 1.0;
 constexpr std::size_t kContextFeatureCount = 6;
+constexpr std::size_t kCoreProprioFeatureCount = 8;
+constexpr std::size_t kContactFeatureCount = 4;
+constexpr std::size_t kThreatFeatureCount = 1;
+constexpr std::size_t kPursuitFeatureCount = 2;
 
 [[nodiscard]] double SafeDivide(double numerator, double denominator, double default_value) noexcept {
     if (std::abs(denominator) < 1e-9) {
         return default_value;
     }
     return numerator / denominator;
+}
+
+[[nodiscard]] double SafeFinite(double value, double fallback = 0.0) noexcept {
+    return std::isfinite(value) ? value : fallback;
 }
 
 [[nodiscard]] double ComputeSlopeMagnitude(const TransformComponent& transform,
@@ -48,6 +57,13 @@ constexpr std::size_t kContextFeatureCount = 6;
     const double ground_y = terrain ? terrain->height(transform.position.x, transform.position.z)
                                     : 0.0;
     return transform.position.y - ground_y <= 0.2;
+}
+
+[[nodiscard]] double SpeedMagnitudeNormalized(const KinematicsComponent& kinematics) noexcept {
+    const double vx = kinematics.linear_velocity.x;
+    const double vz = kinematics.linear_velocity.z;
+    const double speed = std::sqrt(vx * vx + vz * vz);
+    return std::clamp(speed / 12.0, 0.0, 1.0);
 }
 
 void EnsureGateMultipliers(LifecycleComponent& lifecycle, std::size_t module_count) noexcept {
@@ -119,6 +135,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
 
     const Terrain* terrain = registry.ctx().find<Terrain>();
     const SoilGrid* soil = registry.ctx().find<SoilGrid>();
+    const auto* plant_index = registry.ctx().find<PlantSpatialIndex>();
     const double global_density =
         std::clamp(static_cast<double>(registry.alive()) / 250.0, 0.0, 1.0);
     const double dt = context.fixed_dt();
@@ -131,6 +148,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         const auto& kinematics = view.get<KinematicsComponent>(entity);
         const auto& transform = view.get<TransformComponent>(entity);
         auto& lifecycle = view.get<LifecycleComponent>(entity);
+        auto* reproduction = registry.try_get<ReproductionComponent>(entity);
 
         brain.accumulator += dt;
         if (brain.update_interval <= 0.0) {
@@ -139,6 +157,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         if (brain.accumulator + 1e-9 < brain.update_interval) {
             continue;
         }
+        const double brain_step_dt = std::max(dt, brain.accumulator);
 
         const auto* genome = storage_.get(handle.id);
         if (genome == nullptr) {
@@ -153,7 +172,7 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
                 : 1;
 
         // Update lifecycle age and stage selection.
-        lifecycle.age += dt;
+        lifecycle.age += brain_step_dt;
         const auto* life_stages = genome->life_stages();
         if (life_stages != nullptr && life_stages->size() > 0) {
             std::uint32_t desired_index = lifecycle.stage_index;
@@ -175,6 +194,14 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
             EnsureGateMultipliers(lifecycle, module_count);
         }
 
+        if (reproduction != nullptr) {
+            if (!lifecycle.reproduction_allowed) {
+                reproduction->timer = std::numeric_limits<double>::infinity();
+            } else if (!std::isfinite(reproduction->timer)) {
+                reproduction->timer = std::max(0.0, reproduction->cooldown);
+            }
+        }
+
         const double age_frac =
             lifecycle.max_stage_age > 0.0
                 ? std::clamp(lifecycle.age / lifecycle.max_stage_age, 0.0, 1.0)
@@ -184,6 +211,8 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
             std::clamp(SafeDivide(metabolism.energy, std::max(1e-6, metabolism.max_energy), 0.0),
                        0.0,
                        1.0);
+        const double hunger_signal = 1.0 - energy_frac;
+        const double speed_norm = SpeedMagnitudeNormalized(kinematics);
         const double slope = ComputeSlopeMagnitude(transform, terrain);
         const double soil_factor = SampleSoilNutrient(transform, soil);
         const double density = global_density;
@@ -198,31 +227,75 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
             on_ground ? 1.0 : 0.0,
         };
 
-        const std::size_t sensor_count = static_cast<std::size_t>(brain.input_count);
+        const auto* vision = registry.try_get<VisionResult>(entity);
+        const std::size_t vision_feature_count = vision ? vision->buffer.size() : 0;
+
+        const auto* contact = registry.try_get<ContactSenseComponent>(entity);
+        const double contact_count_norm =
+            contact ? std::clamp(static_cast<double>(contact->contact_count) / 6.0, 0.0, 1.0) : 0.0;
+        const Vec3 contact_normal = contact ? contact->contact_normal_sum : Vec3{0.0, 0.0, 0.0};
+        const double contact_force_norm =
+            contact ? std::clamp(contact->contact_force_magnitude / 200.0, 0.0, 1.0) : 0.0;
+
+        const auto* threat = registry.try_get<ThreatComponent>(entity);
+        const double threat_signal = threat ? 1.0 : 0.0;
+
+        double pursuit_distance_norm = 0.0;
+        double pursuit_bearing = 0.0;
+        if (const auto* pursuit = registry.try_get<PursuitComponent>(entity);
+            pursuit != nullptr && pursuit->target_entity != entt::null &&
+            registry.valid(pursuit->target_entity)) {
+            if (const auto* target_transform = registry.try_get<TransformComponent>(pursuit->target_entity)) {
+                const Vec3 delta = target_transform->position - transform.position;
+                const double planar_dist = std::sqrt(delta.x * delta.x + delta.z * delta.z);
+                const double max_dist = std::max(0.1, pursuit->engage_distance);
+                pursuit_distance_norm = std::clamp(planar_dist / max_dist, 0.0, 1.0);
+                pursuit_bearing = std::clamp(std::atan2(delta.z, delta.x) / 3.14159265358979323846,
+                                             -1.0,
+                                             1.0);
+            }
+        }
+
+        const std::size_t required_sensor_count = kCoreProprioFeatureCount +
+                                                  kContactFeatureCount +
+                                                  kThreatFeatureCount +
+                                                  kPursuitFeatureCount +
+                                                  vision_feature_count;
+        const std::size_t sensor_count = std::max<std::size_t>(static_cast<std::size_t>(brain.input_count),
+                                                                required_sensor_count);
         input_buffer_.assign(sensor_count, 0.0);
-        if (!input_buffer_.empty()) {
-            input_buffer_[0] = context_features[0];
-        }
-        if (input_buffer_.size() > 1) {
-            input_buffer_[1] = std::clamp(kinematics.linear_velocity.y, -25.0, 25.0) / 25.0;
-        }
-        if (input_buffer_.size() > 2) {
-            input_buffer_[2] = context_features[5];
-        }
-        if (input_buffer_.size() > 3) {
-            input_buffer_[3] = context_features[2];
-        }
-        if (input_buffer_.size() > 4) {
-            input_buffer_[4] = context_features[3];
-        }
-        if (input_buffer_.size() > 5) {
-            input_buffer_[5] = context_features[4];
-        }
-        if (input_buffer_.size() > 6) {
-            input_buffer_[6] = context_features[1];
-        }
-        if (input_buffer_.size() > 7) {
-            input_buffer_[7] = lifecycle.energy_scale;
+
+        std::size_t cursor = 0;
+        auto write_feature = [&](double value) {
+            if (cursor < input_buffer_.size()) {
+                input_buffer_[cursor] = value;
+            }
+            ++cursor;
+        };
+
+        write_feature(energy_frac);
+        write_feature(hunger_signal);
+        write_feature(age_frac);
+        write_feature(speed_norm);
+        write_feature(slope);
+        write_feature(soil_factor);
+        write_feature(density);
+        write_feature(on_ground ? 1.0 : 0.0);
+
+        write_feature(contact_count_norm);
+        write_feature(std::clamp(contact_normal.x, -1.0, 1.0));
+        write_feature(std::clamp(contact_normal.z, -1.0, 1.0));
+        write_feature(contact_force_norm);
+
+        write_feature(threat_signal);
+
+        write_feature(pursuit_distance_norm);
+        write_feature(pursuit_bearing);
+
+        if (vision != nullptr) {
+            for (const double value : vision->buffer) {
+                write_feature(value);
+            }
         }
 
         const std::size_t output_count = static_cast<std::size_t>(brain.output_count);
@@ -361,24 +434,69 @@ void BrainInferenceSystem::tick(SimulationContext& context) {
         double impulse_z = 0.0;
         bool jump = false;
         bool eat = false;
+        bool attack = false;
 
         if (!outputs.empty()) {
-            impulse_x = std::clamp(outputs[0], -kImpulseClamp, kImpulseClamp);
+            impulse_x = std::clamp(SafeFinite(outputs[0]), -kImpulseClamp, kImpulseClamp);
         }
         if (outputs.size() > 1) {
-            impulse_z = std::clamp(outputs[1], -kImpulseClamp, kImpulseClamp);
+            impulse_z = std::clamp(SafeFinite(outputs[1]), -kImpulseClamp, kImpulseClamp);
         }
         if (outputs.size() > 2) {
-            jump = outputs[2] > 0.5;
+            jump = SafeFinite(outputs[2]) > 0.5;
         }
         if (outputs.size() > 3) {
-            eat = outputs[3] > 0.5;
+            eat = SafeFinite(outputs[3]) > 0.5;
+        }
+        if (outputs.size() > 4) {
+            attack = SafeFinite(outputs[4]) > 0.5;
+        }
+
+        if (hunger_signal > 0.15 && plant_index != nullptr) {
+            const auto* diet = registry.try_get<DietComponent>(entity);
+            if (diet != nullptr && diet->type == DietType::Herbivore) {
+                entt::entity nearest_plant = entt::null;
+                double nearest_dist_sq = std::numeric_limits<double>::max();
+                constexpr double kForageRadius = 512.0;
+                plant_index->for_each_in_radius(
+                    registry,
+                    transform.position,
+                    kForageRadius,
+                    [&](entt::entity plant_entity, double dist_sq) {
+                        if (dist_sq < nearest_dist_sq) {
+                            nearest_dist_sq = dist_sq;
+                            nearest_plant = plant_entity;
+                        }
+                    });
+
+                if (nearest_plant != entt::null) {
+                    const auto* plant_transform = registry.try_get<TransformComponent>(nearest_plant);
+                    if (plant_transform != nullptr) {
+                        const Vec3 delta = plant_transform->position - transform.position;
+                        const double len_sq = delta.x * delta.x + delta.z * delta.z;
+                        if (len_sq > 1e-9) {
+                            const double inv_len = 1.0 / std::sqrt(len_sq);
+                            const double target_x = delta.x * inv_len;
+                            const double target_z = delta.z * inv_len;
+                            constexpr double kSteerBlend = 0.7;
+                            impulse_x = std::clamp(impulse_x * (1.0 - kSteerBlend) + target_x * kSteerBlend,
+                                                   -kImpulseClamp,
+                                                   kImpulseClamp);
+                            impulse_z = std::clamp(impulse_z * (1.0 - kSteerBlend) + target_z * kSteerBlend,
+                                                   -kImpulseClamp,
+                                                   kImpulseClamp);
+                            eat = true;
+                        }
+                    }
+                }
+            }
         }
 
         actuation.impulse_x = impulse_x;
         actuation.impulse_z = impulse_z;
         actuation.jump = jump;
         actuation.eat = eat;
+        actuation.attack = attack;
         actuation.update_skip = 0;
 
         brain.accumulator = std::fmod(brain.accumulator, brain.update_interval);
@@ -405,4 +523,3 @@ genetics::BrainNeat& BrainInferenceSystem::fetch_neat_runtime(genetics::GenomeId
 }
 
 }  // namespace evolution::sim
-

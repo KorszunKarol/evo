@@ -2,6 +2,10 @@
 
 #include <spdlog/spdlog.h>
 
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#endif
+
 #include "evolution/sim/simulation_context.h"
 
 namespace evolution::sim {
@@ -12,10 +16,21 @@ SimulationApp::SimulationApp(SimulationConfig config)
 }
 
 void SimulationApp::tick() {
+#ifdef TRACY_ENABLE
+    ZoneScoped;
+#endif
     begin_tick();
     SimulationContext context{registry_, fixed_dt_, simulation_time_};
-    scheduler_.tick_systems(context);
+    {
+#ifdef TRACY_ENABLE
+        ZoneScopedN("Scheduler");
+#endif
+        scheduler_.tick_systems(context);
+    }
     end_tick();
+#ifdef TRACY_ENABLE
+    FrameMark;
+#endif
 }
 
 void SimulationApp::run_for_steps(std::size_t steps) {

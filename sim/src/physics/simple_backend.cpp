@@ -357,6 +357,15 @@ void SimplePhysicsBackend::dispatch_contact_events() {
         event.normal = manifold.points[0].normal;
         event.point = manifold.points[0].position;
         event.penetration = manifold.points[0].penetration;
+        double impulse_sum = 0.0;
+        for (std::size_t i = 0; i < manifold.count; ++i) {
+            const auto& cp = manifold.points[i];
+            const double tangent_mag =
+                std::sqrt(cp.tangent_impulse[0] * cp.tangent_impulse[0] +
+                          cp.tangent_impulse[1] * cp.tangent_impulse[1]);
+            impulse_sum += std::sqrt(cp.normal_impulse * cp.normal_impulse + tangent_mag * tangent_mag);
+        }
+        event.impulse_magnitude = impulse_sum;
 
         const auto prev = previous_map.find(key);
         if (prev == previous_map.end()) {
@@ -382,5 +391,4 @@ void SimplePhysicsBackend::dispatch_contact_events() {
 }
 
 }  // namespace evolution::sim
-
 

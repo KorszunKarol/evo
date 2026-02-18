@@ -180,3 +180,11 @@ assets/temp/
 # Chat logs and development artifacts
 previous_chats/
 
+# Runtime and telemetry outputs
+output/
+output.csv
+trace.tracy
+*.tracy
+
+# AI planning scratch space
+.sisyphus/

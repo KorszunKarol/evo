@@ -9,6 +9,23 @@
 namespace evolution::sim {
 
 /**
+ * @brief Selects which soil simulation backend is activated during environment initialization.
+ * @param None.
+ * @return None.
+ * @throws None.
+ * @complexity O(1)
+ * @note This is an initialization-time decision. Production builds should prefer `Volume3D` to
+ *       avoid allocating/updating the legacy 2D `SoilGrid` alongside `SoilVolume`.
+ * @warning When set to `Volume3D`, callers must not assume `SoilGrid` exists in the registry
+ *          context.
+ * @notthreadsafe Intended for single-threaded setup only.
+ */
+enum class SoilMode {
+    Legacy2D,  ///< Enable legacy 2D `SoilGrid` services and updates.
+    Volume3D   ///< Enable 3D `SoilVolume` services (default) and skip legacy grid.
+};
+
+/**
  * @brief Parameters controlling initial environment population and services.
  */
 struct PlantBootstrapConfig {
@@ -22,6 +39,7 @@ struct PlantBootstrapConfig {
  * @brief Bundles configuration for terrain, soil, biomes, water, and initial plants.
  */
 struct EnvironmentConfig {
+    SoilMode soil_mode{SoilMode::Volume3D}; ///< Selects legacy 2D vs 3D-only soil operation.
     TerrainConfig terrain{};           ///< Terrain generation parameters.
     SoilConfig soil{};                 ///< Soil simulation parameters.
     BiomeConfig biome{};               ///< Biome map generation parameters.
@@ -47,6 +65,5 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
 void seed_initial_plants(entt::registry& registry, const EnvironmentConfig& config);
 
 }  // namespace evolution::sim
-
 
 
