@@ -14,6 +14,7 @@
 
 #include "evolution/sim/components.h"
 #include "evolution/sim/environment/environment.h"
+#include "evolution/sim/population_monitor.h"
 
 namespace evolution::sim {
 
@@ -31,10 +32,12 @@ constexpr std::string_view kEventTypeToString[] = {
     "GENOME_TRAITS",
     "LINEAGE_LINK",
     "ROLLUP_SNAPSHOT",
+    "POPULATION_RESCUE",
+    "OVERPOPULATION_CULL",
 };
 
 static_assert(sizeof(kEventTypeToString) / sizeof(kEventTypeToString[0]) ==
-              static_cast<std::size_t>(TelemetryEventType::ROLLUP_SNAPSHOT) + 1,
+              static_cast<std::size_t>(TelemetryEventType::OVERPOPULATION_CULL) + 1,
               "Event type string array must match enum");
 
 constexpr std::string_view kDeathCauseToString[] = {
@@ -117,6 +120,12 @@ TelemetrySystem::~TelemetrySystem() {
 void TelemetrySystem::tick(SimulationContext& context) {
     const double dt = context.fixed_dt();
     ++tick_counter_;
+    events_window_accumulator_ += dt;
+    if (events_window_accumulator_ >= 1.0) {
+        events_window_accumulator_ = std::fmod(events_window_accumulator_, 1.0);
+        events_window_total_ = 0;
+        events_window_by_type_.clear();
+    }
 
     if (rollup_config_.interval_seconds > 0.0) {
         rollup_accumulator_ += dt;
@@ -126,7 +135,16 @@ void TelemetrySystem::tick(SimulationContext& context) {
         }
     }
 
-    EmitMovementMetrics(context);
+    const bool has_targeted_capture = !targeting_.target_species.empty() ||
+                                      !targeting_.target_entities.empty() ||
+                                      !targeting_.target_lineages.empty();
+    const bool should_emit_movement =
+        (rollup_config_.movement_capture_mode == MovementCaptureMode::Sampled &&
+         (targeting_.sampling_rate > 0.0 || has_targeted_capture)) ||
+        (rollup_config_.movement_capture_mode == MovementCaptureMode::TargetedOnly && has_targeted_capture);
+    if (should_emit_movement) {
+        EmitMovementMetrics(context);
+    }
 
     if (event_buffer_.size() >= rollup_config_.buffer_size) {
         flush();
@@ -134,9 +152,31 @@ void TelemetrySystem::tick(SimulationContext& context) {
 }
 
 bool TelemetrySystem::emit_event(const TelemetryEvent& event, bool force_capture) {
+    ++events_attempted_total_;
+
     if (!force_capture && !should_sample()) {
+        ++events_dropped_total_;
         return false;
     }
+
+    if (!force_capture) {
+        if (rollup_config_.max_events_per_second > 0 &&
+            events_window_total_ >= rollup_config_.max_events_per_second) {
+            ++events_dropped_total_;
+            return false;
+        }
+        const auto by_type = events_window_by_type_.find(event.type);
+        const std::size_t count_for_type = by_type != events_window_by_type_.end() ? by_type->second : 0;
+        if (rollup_config_.max_events_per_type_per_second > 0 &&
+            count_for_type >= rollup_config_.max_events_per_type_per_second) {
+            ++events_dropped_total_;
+            return false;
+        }
+    }
+
+    ++events_window_total_;
+    ++events_window_by_type_[event.type];
+    ++events_written_total_;
 
     event_buffer_.push_back(event);
     return true;
@@ -208,6 +248,30 @@ void TelemetrySystem::EmitRollup(SimulationContext& context) {
     if (auto* stats = registry.ctx().find<FeedingStatistics>()) {
         rollup.total_feeding_energy = stats->energy_transferred_last_tick;
     }
+    if (const auto* monitor = registry.ctx().find<PopulationMonitor>()) {
+        rollup.creature_density = monitor->latest.creature_density;
+        rollup.herbivore_to_plant_ratio = monitor->latest.herbivore_to_plant_ratio;
+        rollup.carnivore_to_herbivore_ratio = monitor->latest.carnivore_to_herbivore_ratio;
+        rollup.population_stability_index = monitor->latest.population_stability_index;
+    }
+    if (const auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+        const double dt_window = std::max(1e-6, rollup.sim_time - prev_rollup_time_);
+        const std::uint64_t births_delta = counters->births_total - prev_births_total_;
+        const std::uint64_t deaths_delta = counters->deaths_total - prev_deaths_total_;
+        rollup.reproduction_rate = static_cast<double>(births_delta) / dt_window;
+        rollup.death_rate = static_cast<double>(deaths_delta) / dt_window;
+        rollup.rescue_count = counters->rescues_total;
+        rollup.cull_count = counters->culls_total;
+        prev_births_total_ = counters->births_total;
+        prev_deaths_total_ = counters->deaths_total;
+    }
+    rollup.events_dropped = events_dropped_total_;
+    rollup.events_written = events_written_total_;
+    rollup.effective_sampling_rate =
+        events_attempted_total_ > 0
+            ? static_cast<double>(events_written_total_) / static_cast<double>(events_attempted_total_)
+            : 1.0;
+    prev_rollup_time_ = rollup.sim_time;
 
     rollup.species_rollups.reserve(species_stats.size());
     for (const auto& [species_id, stats] : species_stats) {
@@ -304,7 +368,7 @@ void TelemetrySystem::WriteRollupCsv(const GlobalRollup& rollup) {
     }
 
     if (should_write_header) {
-        out << "schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy\n";
+        out << "schema_version,run_id,sim_time,total_population,mean_energy,total_feeding_energy,creature_density,herbivore_to_plant_ratio,carnivore_to_herbivore_ratio,reproduction_rate,death_rate,population_stability_index,rescue_count,cull_count,events_dropped,events_written,effective_sampling_rate\n";
     }
 
     csv_header_written_ = true;
@@ -314,7 +378,18 @@ void TelemetrySystem::WriteRollupCsv(const GlobalRollup& rollup) {
         << rollup.sim_time << ","
         << rollup.total_population << ","
         << rollup.mean_energy << ","
-        << rollup.total_feeding_energy << "\n";
+        << rollup.total_feeding_energy << ","
+        << rollup.creature_density << ","
+        << rollup.herbivore_to_plant_ratio << ","
+        << rollup.carnivore_to_herbivore_ratio << ","
+        << rollup.reproduction_rate << ","
+        << rollup.death_rate << ","
+        << rollup.population_stability_index << ","
+        << rollup.rescue_count << ","
+        << rollup.cull_count << ","
+        << rollup.events_dropped << ","
+        << rollup.events_written << ","
+        << rollup.effective_sampling_rate << "\n";
 }
 
 void TelemetrySystem::WriteSpeciesRollupCsv(const GlobalRollup& rollup) {
@@ -358,9 +433,7 @@ bool TelemetrySystem::ShouldCaptureTargeted(entt::entity entity,
     if (!targeting_.target_lineages.empty() && genome_id != 0) {
         return targeting_.target_lineages.contains(genome_id);
     }
-    return targeting_.target_entities.empty() &&
-           targeting_.target_species.empty() &&
-           targeting_.target_lineages.empty();
+    return false;
 }
 
 }  // namespace evolution::sim

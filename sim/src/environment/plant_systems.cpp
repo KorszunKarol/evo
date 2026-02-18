@@ -10,8 +10,29 @@
 
 #include "evolution/sim/components.h"
 #include "evolution/sim/environment/soil_volume.h"
+#include "evolution/sim/adaptive_control_system.h"
+#include "evolution/sim/population_monitor.h"
 
 namespace evolution::sim {
+
+namespace {
+
+[[nodiscard]] double safe_ratio(double numerator, double denominator) noexcept {
+    if (std::abs(denominator) < 1e-9) {
+        return 0.0;
+    }
+    return numerator / denominator;
+}
+
+[[nodiscard]] double smoothstep(double edge0, double edge1, double x) noexcept {
+    if (edge1 <= edge0) {
+        return x >= edge1 ? 1.0 : 0.0;
+    }
+    const double t = std::clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+}  // namespace
 
 PlantGrowthSystem::PlantGrowthSystem(double nutrient_to_energy) noexcept
     : nutrient_to_energy_(nutrient_to_energy) {}
@@ -96,8 +117,14 @@ void PlantGrowthSystem::tick(SimulationContext& context) {
     }
 }
 
+PlantSeedingSystem::PlantSeedingSystem() noexcept
+    : PlantSeedingSystem(Tuning{}) {}
+
+PlantSeedingSystem::PlantSeedingSystem(Tuning tuning) noexcept
+    : tuning_(tuning), rng_(tuning.seed) {}
+
 PlantSeedingSystem::PlantSeedingSystem(unsigned int seed) noexcept
-    : rng_(seed) {}
+    : PlantSeedingSystem(Tuning{.seed = seed}) {}
 
 void PlantSeedingSystem::tick(SimulationContext& context) {
     auto& registry = context.registry();
@@ -120,6 +147,32 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         return;
     }
 
+    PopulationConfig population_config{};
+    PopulationSnapshot population_snapshot{};
+    if (const auto* monitor = registry.ctx().find<PopulationMonitor>()) {
+        population_config = monitor->config;
+        population_snapshot = monitor->latest;
+    }
+
+    const auto compute_soil_fraction = [&]() {
+        if (soil_grid != nullptr) {
+            const double max_nutrient = std::max(1.0, static_cast<double>(soil_grid->config().max_nutrient));
+            return std::clamp(soil_grid->mean_nutrient() / max_nutrient, 0.0, 1.0);
+        }
+        if (volume != nullptr) {
+            // SoilVolume regeneration currently tends toward biome baselines around ~3-6 nitrogen.
+            return std::clamp(volume->mean_nitrogen() / 6.0, 0.0, 1.0);
+        }
+        return 1.0;
+    };
+    const double soil_fraction = compute_soil_fraction();
+    const double depletion_threshold =
+        std::clamp(population_config.soil_depletion_threshold, 0.01, 1.0);
+    const double min_multiplier =
+        std::clamp(population_config.min_plant_seeding_multiplier, 0.0, 1.0);
+    const double max_multiplier =
+        std::clamp(population_config.max_plant_seeding_multiplier, min_multiplier, 1.0);
+
     const auto* biome_map = registry.ctx().find<BiomeMap>();
     const auto* water_map = registry.ctx().find<WaterMap>();
     const auto* species_registry = registry.ctx().find<PlantSpeciesRegistry>();
@@ -135,11 +188,51 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
     std::uniform_real_distribution<double> energy_dist(3.0, 8.0);
     std::uniform_real_distribution<double> probability(0.0, 1.0);
 
-    // Global Plant Cap Check
     const auto active_plants = registry.view<PlantComponent>().size();
-    if (active_plants >= 20000) {
-        update_environment_stats(registry);
-        return;
+    const auto herbivore_count = population_snapshot.herbivore_count > 0
+                                     ? population_snapshot.herbivore_count
+                                     : registry.view<MetabolismComponent, HerbivoreTag>().size_hint();
+
+    pressure_accumulator_ += context.fixed_dt();
+    const double pressure_update_interval =
+        std::max(0.0, std::min(population_config.seeding_update_interval_s, tuning_.update_interval_s));
+    if (pressure_update_interval <= 0.0 || pressure_accumulator_ + 1e-9 >= pressure_update_interval) {
+        if (pressure_update_interval > 0.0) {
+            pressure_accumulator_ = std::fmod(pressure_accumulator_, pressure_update_interval);
+        } else {
+            pressure_accumulator_ = 0.0;
+        }
+
+        const double plant_pressure =
+            std::clamp(population_config.plant_pressure_gain, 0.0, 4.0) *
+            smoothstep(static_cast<double>(population_config.plant_soft_capacity),
+                       static_cast<double>(population_config.plant_high_pressure_capacity),
+                       static_cast<double>(active_plants));
+        constexpr double kTargetHerbivoreToPlantRatio = 0.02;
+        const double herbivore_to_plant = safe_ratio(static_cast<double>(herbivore_count),
+                                                     static_cast<double>(std::max<std::size_t>(1, active_plants)));
+        const double grazing_relief =
+            std::clamp(population_config.herbivore_pressure_gain, 0.0, 4.0) *
+            std::clamp(herbivore_to_plant / kTargetHerbivoreToPlantRatio, 0.0, 1.0);
+        const double density_feedback =
+            std::clamp(population_config.density_feedback_gain, 0.0, 4.0) *
+            std::clamp((kTargetHerbivoreToPlantRatio - herbivore_to_plant) /
+                           kTargetHerbivoreToPlantRatio,
+                       0.0,
+                       1.0);
+        const double soil_term =
+            std::clamp(soil_fraction / std::max(1e-6, depletion_threshold), 0.0, 1.0);
+        pressure_multiplier_ = std::clamp((1.0 - plant_pressure - density_feedback + grazing_relief) *
+                                              soil_term,
+                                          min_multiplier,
+                                          max_multiplier);
+    }
+    double seeding_multiplier = pressure_multiplier_;
+    if (const auto* adaptive = registry.ctx().find<AdaptiveControlState>()) {
+        if (adaptive->plant_seeding_multiplier_override > 0.0) {
+            seeding_multiplier =
+                std::clamp(adaptive->plant_seeding_multiplier_override, min_multiplier, max_multiplier);
+        }
     }
 
     const auto* spatial_index = registry.ctx().find<PlantSpatialIndex>();
@@ -183,8 +276,9 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         // Density Check using Spatial Index
         if (spatial_index != nullptr) {
             bool too_crowded = false;
-            // Check radius slightly smaller than plant radius to allow some packing but not overlap
-            const double check_radius = plant.radius * 0.8; 
+            // Increase spacing requirements as pressure rises to discourage local runaway patches.
+            const double pressure = 1.0 - seeding_multiplier;
+            const double check_radius = plant.radius * (0.8 + pressure * 0.7);
             spatial_index->for_each_in_radius(registry, Vec3{world_x, 0.0, world_z}, check_radius, 
                 [&too_crowded](entt::entity, double) {
                     too_crowded = true;
@@ -196,7 +290,9 @@ void PlantSeedingSystem::tick(SimulationContext& context) {
         if (normal.y < 0.45) {
             continue;
         }
-        if (probability(rng_) > params.establish_probability) {
+        const double effective_establish_probability =
+            std::clamp(params.establish_probability * seeding_multiplier, 0.0, 1.0);
+        if (probability(rng_) > effective_establish_probability) {
             continue;
         }
 

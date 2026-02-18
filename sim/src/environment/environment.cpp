@@ -9,6 +9,8 @@
 #include <random>
 #include <vector>
 
+#include <spdlog/spdlog.h>
+
 #include "evolution/sim/components.h"
 
 namespace evolution::sim {
@@ -80,13 +82,9 @@ constexpr double kEpsilon = 1e-5;
     const double hz1 = terrain.height(x, z + delta);
     const double hz0 = terrain.height(x, z - delta);
 
-    const Vec3 dx{2.0 * delta, hx1 - hx0, 0.0};
-    const Vec3 dz{0.0, hz1 - hz0, 2.0 * delta};
-    Vec3 normal{
-        dx.y * dz.z - dx.z * dz.y,
-        dx.z * dz.x - dx.x * dz.z,
-        dx.x * dz.y - dx.y * dz.x,
-    };
+    const double dhdx = (hx1 - hx0) / (2.0 * delta);
+    const double dhdz = (hz1 - hz0) / (2.0 * delta);
+    Vec3 normal{-dhdx, 1.0, -dhdz};
     const double length_sq = normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
     if (length_sq <= kEpsilon) {
         return Vec3{0.0, 1.0, 0.0};
@@ -307,6 +305,7 @@ void PlantSpatialIndex::clear() noexcept {
 void PlantSpatialIndex::rebuild(entt::registry& registry) {
     grid_.clear();
     auto view = registry.view<TransformComponent, struct PlantComponent>();
+    std::size_t inserted = 0;
     for (auto entity : view) {
         const auto& transform = view.get<TransformComponent>(entity);
         const auto& plant = view.get<PlantComponent>(entity);
@@ -314,6 +313,10 @@ void PlantSpatialIndex::rebuild(entt::registry& registry) {
             continue;
         }
         insert(entity, transform.position);
+        ++inserted;
+    }
+    if (inserted == 0) {
+        spdlog::warn("PlantSpatialIndex rebuild produced zero live plants");
     }
 }
 

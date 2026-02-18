@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "evolution/sim/math_types.h"
@@ -138,6 +139,25 @@ public:
     void regenerate(double dt, const BiomeMap* biome_map, double climate_mult);
 
     /**
+     * @brief Computes mean nitrogen value across the volume.
+     * @return Mean nitrogen concentration.
+     * @complexity O(W*H*D).
+     */
+    [[nodiscard]] double mean_nitrogen() const noexcept;
+
+    /**
+     * @brief Precompute per-column biome indices for hot regeneration loops.
+     * @param biome_map Biome map used to classify each (x,z) column.
+     * @return None.
+     * @throws None.
+     * @complexity O(W*D).
+     * @note Intended to run once during environment initialization.
+     * @warning Callers should treat the cache as invalid if the biome map changes.
+     * @threadsafe @notthreadsafe.
+     */
+    void precompute_biome_indices(const BiomeMap& biome_map);
+
+    /**
      * @brief Retrieve the voxel grid width.
      * @param None.
      * @return Width in voxel cells.
@@ -199,7 +219,10 @@ private:
 
     SoilVolumeConfig config_;
     std::vector<SoilVoxel> voxels_;
-    std::vector<SoilVoxel> scratch_;  ///< Double buffer for diffusion
+     std::vector<SoilVoxel> scratch_;  ///< Double buffer for diffusion
+
+    std::vector<std::uint8_t> biome_idx_cache_{};
+    bool biome_idx_cache_valid_{false};
 };
 
 }  // namespace evolution::sim

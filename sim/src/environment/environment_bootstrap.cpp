@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "evolution/sim/components.h"
+#include "evolution/sim/environment/creature_spatial_index.h"
 #include "evolution/sim/environment/soil_volume.h"
 
 namespace evolution::sim {
@@ -47,6 +48,14 @@ namespace {
 
 void initialize_environment(entt::registry& registry, const EnvironmentConfig& config) {
     auto& ctx = registry.ctx();
+
+    // Persist the selected soil mode in the registry context for systems/tests.
+    if (!ctx.contains<SoilMode>()) {
+        ctx.emplace<SoilMode>(config.soil_mode);
+    } else {
+        ctx.erase<SoilMode>();
+        ctx.emplace<SoilMode>(config.soil_mode);
+    }
 
     // Initialize terrain first (required for biome and water maps)
     Terrain* terrain_ptr = nullptr;
@@ -87,11 +96,15 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
     }
 
     // Initialize soil grid (2D legacy)
-    if (!ctx.contains<SoilGrid>()) {
-        ctx.emplace<SoilGrid>(config.soil);
-    } else {
+    if (config.soil_mode == SoilMode::Legacy2D) {
+        if (!ctx.contains<SoilGrid>()) {
+            ctx.emplace<SoilGrid>(config.soil);
+        } else {
+            ctx.erase<SoilGrid>();
+            ctx.emplace<SoilGrid>(config.soil);
+        }
+    } else if (ctx.contains<SoilGrid>()) {
         ctx.erase<SoilGrid>();
-        ctx.emplace<SoilGrid>(config.soil);
     }
 
     // Initialize soil volume (3D)
@@ -115,6 +128,14 @@ void initialize_environment(entt::registry& registry, const EnvironmentConfig& c
     } else {
         ctx.erase<PlantSpatialIndex>();
         ctx.emplace<PlantSpatialIndex>(config.plant_spatial_cell_size);
+    }
+
+    // Initialize creature spatial index
+    if (!ctx.contains<CreatureSpatialIndex>()) {
+        ctx.emplace<CreatureSpatialIndex>(config.plant_spatial_cell_size);
+    } else {
+        ctx.erase<CreatureSpatialIndex>();
+        ctx.emplace<CreatureSpatialIndex>(config.plant_spatial_cell_size);
     }
 
     // Initialize feeding statistics

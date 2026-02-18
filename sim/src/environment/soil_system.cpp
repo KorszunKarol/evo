@@ -4,7 +4,12 @@
 #include <cmath>
 #include <numbers>
 
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#endif
+
 #include "evolution/sim/environment/soil_volume.h"
+#include "evolution/sim/environment/environment_bootstrap.h"
 
 namespace evolution::sim {
 
@@ -25,15 +30,24 @@ double SoilSystem::compute_climate_multiplier(double sim_time) const noexcept {
 }
 
 void SoilSystem::tick(SimulationContext& context) {
+#ifdef TRACY_ENABLE
+    ZoneScopedN("SoilSystem");
+#endif
     auto& registry = context.registry();
     const double dt = context.fixed_dt();
 
-    // 1. Update Legacy 2D SoilGrid (if present)
-    // This keeps existing tests and logic working until full migration
-    if (registry.ctx().contains<SoilGrid>()) {
+    const auto* soil_mode = registry.ctx().find<SoilMode>();
+    const bool legacy_2d_enabled = (soil_mode != nullptr) && (*soil_mode == SoilMode::Legacy2D);
+
+    // 1. Update Legacy 2D SoilGrid (only when legacy mode is enabled)
+    // This keeps existing tests and logic working until full migration.
+    if (legacy_2d_enabled && registry.ctx().contains<SoilGrid>()) {
         auto& soil = registry.ctx().get<SoilGrid>();
         
         if (diffusion_scale_ > 0.0) {
+#ifdef TRACY_ENABLE
+            ZoneScopedN("SoilGrid::diffuse");
+#endif
             soil.diffuse(dt * diffusion_scale_);
         }
 
@@ -41,6 +55,9 @@ void SoilSystem::tick(SimulationContext& context) {
         if (regeneration_scale_ > 0.0) {
             const auto* biome_map = registry.ctx().find<BiomeMap>();
             if (biome_map != nullptr) {
+#ifdef TRACY_ENABLE
+                ZoneScopedN("SoilGrid::regenerate_by_biome");
+#endif
                 const double climate_mult = compute_climate_multiplier(context.simulation_time());
                 const double effective_mult = climate_mult * regeneration_scale_;
                 
@@ -53,6 +70,9 @@ void SoilSystem::tick(SimulationContext& context) {
                 soil.regenerate_by_biome(dt, *biome_map, scaled_regen_rates, biome_baselines_, 1.0);
             } else {
                 // Fallback to uniform regeneration
+#ifdef TRACY_ENABLE
+                ZoneScopedN("SoilGrid::regenerate");
+#endif
                 soil.regenerate(dt * regeneration_scale_);
             }
         }

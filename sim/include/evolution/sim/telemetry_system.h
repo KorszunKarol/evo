@@ -38,6 +38,8 @@ enum class TelemetryEventType : uint8_t {
     GENOME_TRAITS,
     LINEAGE_LINK,
     ROLLUP_SNAPSHOT,
+    POPULATION_RESCUE,
+    OVERPOPULATION_CULL,
 };
 
 /// @brief Death causes for ENTITY_DEATH events.
@@ -55,10 +57,27 @@ struct TelemetryTargeting {
     double sampling_rate{0.0};
 };
 
+enum class TelemetryDropPolicy : uint8_t {
+    DropNewest,
+    DropOldest,
+    Sample,
+};
+
+enum class MovementCaptureMode : uint8_t {
+    Off,
+    Sampled,
+    TargetedOnly,
+};
+
 /// @brief Rollup aggregation configuration.
 struct RollupConfig {
     double interval_seconds{1.0};
     std::size_t buffer_size{1000};
+    std::size_t max_events_per_second{5000};
+    std::size_t max_events_per_type_per_second{1000};
+    TelemetryDropPolicy drop_policy{TelemetryDropPolicy::DropNewest};
+    bool adaptive_sampling_enabled{true};
+    MovementCaptureMode movement_capture_mode{MovementCaptureMode::TargetedOnly};
 };
 
 /// @brief Telemetry event payload wrapper.
@@ -85,6 +104,17 @@ struct GlobalRollup {
     std::size_t species_count{0};
     double mean_energy{0.0};
     double total_feeding_energy{0.0};
+    double creature_density{0.0};
+    double herbivore_to_plant_ratio{0.0};
+    double carnivore_to_herbivore_ratio{0.0};
+    double reproduction_rate{0.0};
+    double death_rate{0.0};
+    double population_stability_index{0.0};
+    std::uint64_t rescue_count{0};
+    std::uint64_t cull_count{0};
+    std::uint64_t events_dropped{0};
+    std::uint64_t events_written{0};
+    double effective_sampling_rate{0.0};
     std::vector<SpeciesRollup> species_rollups{};
 };
 
@@ -142,6 +172,15 @@ private:
     bool species_csv_header_written_{false};
     uint64_t tick_counter_{0};
     std::unordered_map<entt::entity, Vec3> last_positions_{};
+    std::uint64_t prev_births_total_{0};
+    std::uint64_t prev_deaths_total_{0};
+    double prev_rollup_time_{0.0};
+    std::uint64_t events_attempted_total_{0};
+    std::uint64_t events_written_total_{0};
+    std::uint64_t events_dropped_total_{0};
+    std::size_t events_window_total_{0};
+    std::unordered_map<TelemetryEventType, std::size_t> events_window_by_type_{};
+    double events_window_accumulator_{0.0};
 };
 
 /// @brief Registry context wrapper providing access to the telemetry system.

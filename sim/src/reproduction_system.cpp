@@ -12,6 +12,8 @@
 
 #include "genome_generated.h"
 #include "evolution/genetics/trait_extraction.h"
+#include "evolution/sim/environment/creature_spatial_index.h"
+#include "evolution/sim/population_monitor.h"
 #include "evolution/sim/telemetry_system.h"
 
 namespace evolution::sim {
@@ -31,6 +33,34 @@ std::string TraitsToJson(const std::array<double, 8>& traits) {
     return oss.str();
 }
 
+[[nodiscard]] double ComputeDensityPressure(entt::registry& registry,
+                                            const CreatureSpatialIndex* index,
+                                            entt::entity entity,
+                                            const Vec3& position,
+                                            const ReproductionComponent& repro) {
+    if (index == nullptr) {
+        return 0.0;
+    }
+    std::size_t local_count = 0;
+    index->for_each_in_radius(registry, position, repro.density_query_radius, [&](entt::entity other, double) {
+        if (other != entity) {
+            ++local_count;
+        }
+    });
+
+    const double ideal = std::max(1.0, repro.ideal_local_density);
+    return std::max(0.0, (static_cast<double>(local_count) / ideal) - 1.0);
+}
+
+[[nodiscard]] double EffectiveEnergyThreshold(entt::registry& registry,
+                                              const CreatureSpatialIndex* index,
+                                              entt::entity entity,
+                                              const Vec3& position,
+                                              const ReproductionComponent& repro) {
+    const double pressure = ComputeDensityPressure(registry, index, entity, position, repro);
+    return repro.energy_threshold * (1.0 + repro.density_sensitivity * pressure);
+}
+
 }  // namespace
 
 ReproductionSystem::ReproductionSystem(genetics::GenomeStorage& storage,
@@ -45,6 +75,7 @@ void ReproductionSystem::tick(SimulationContext& context) {
     const double dt = context.fixed_dt();
     auto* telemetry_ctx = registry.ctx().find<TelemetryContext>();
     TelemetrySystem* telemetry = telemetry_ctx != nullptr ? telemetry_ctx->system : nullptr;
+    const auto* creature_index = registry.ctx().find<CreatureSpatialIndex>();
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -58,10 +89,18 @@ void ReproductionSystem::tick(SimulationContext& context) {
     for (auto entity : view) {
         auto& repro = view.get<ReproductionComponent>(entity);
         const auto& metabolism = view.get<MetabolismComponent>(entity);
+        const auto& transform = view.get<TransformComponent>(entity);
 
         repro.timer = std::max(0.0, repro.timer - dt);
 
-        if (repro.timer <= 0.0 && metabolism.energy >= repro.energy_threshold) {
+        const double density_pressure =
+            ComputeDensityPressure(registry, creature_index, entity, transform.position, repro);
+        if (density_pressure >= repro.critical_density_pressure) {
+            continue;
+        }
+        const double effective_threshold =
+            EffectiveEnergyThreshold(registry, creature_index, entity, transform.position, repro);
+        if (repro.timer <= 0.0 && metabolism.energy >= effective_threshold) {
             ready_parents.push_back(entity);
         }
     }
@@ -94,13 +133,6 @@ void ReproductionSystem::tick(SimulationContext& context) {
                         auto child_entity = registry.create();
                         auto result = genetics::PhenotypeBuilder::build(child_id, registry, child_entity, storage_);
                         if (result.ok) {
-                            FeedingIntent intent{};
-                            intent.request_eat = true;
-                            intent.reach = 1.5;
-                            intent.rate = 8.0;
-                            registry.emplace_or_replace<FeedingIntent>(child_entity, intent);
-                            registry.emplace_or_replace<HerbivoreTag>(child_entity);
-
                             auto& child_transform = registry.get<TransformComponent>(child_entity);
                             child_transform.position = transform_a.position;
                         auto& child_repro = registry.get<ReproductionComponent>(child_entity);
@@ -109,6 +141,9 @@ void ReproductionSystem::tick(SimulationContext& context) {
                         auto& parent_metabolism = view.get<MetabolismComponent>(parent_a);
                         parent_metabolism.energy -= repro_a.energy_threshold * 0.5;
                         repro_a.timer = repro_a.cooldown;
+                        if (auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+                            ++counters->births_total;
+                        }
 
                         if (telemetry != nullptr) {
                             const bool force_capture = telemetry->should_capture(parent_a, 0, handle_a.id);
@@ -194,6 +229,7 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
 
     std::vector<CandidateMate> candidates;
     const double radius_sq = radius * radius;
+    const auto* creature_index = registry.ctx().find<CreatureSpatialIndex>();
 
     auto view = registry.view<ReproductionComponent,
                               GenomeHandleComponent,
@@ -210,7 +246,20 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
         const auto& transform_candidate = view.get<TransformComponent>(candidate_entity);
 
         // Check cooldown and energy
-        if (repro_candidate.timer > 0.0 || metabolism_candidate.energy < repro_candidate.energy_threshold) {
+        const double density_pressure = ComputeDensityPressure(registry,
+                                                               creature_index,
+                                                               candidate_entity,
+                                                               transform_candidate.position,
+                                                               repro_candidate);
+        if (density_pressure >= repro_candidate.critical_density_pressure) {
+            continue;
+        }
+        const double effective_threshold = EffectiveEnergyThreshold(registry,
+                                                                    creature_index,
+                                                                    candidate_entity,
+                                                                    transform_candidate.position,
+                                                                    repro_candidate);
+        if (repro_candidate.timer > 0.0 || metabolism_candidate.energy < effective_threshold) {
             continue;
         }
 
@@ -239,7 +288,7 @@ std::vector<ReproductionSystem::CandidateMate> ReproductionSystem::FindCandidate
         acceptance *= distance_factor;
 
         // Energy weighting: higher energy = higher acceptance
-        const double energy_factor = metabolism_candidate.energy / repro_candidate.energy_threshold;
+        const double energy_factor = metabolism_candidate.energy / std::max(1.0, effective_threshold);
         acceptance *= std::min(energy_factor, 1.5);
 
         candidates.push_back(CandidateMate{
@@ -349,13 +398,6 @@ bool ReproductionSystem::AttemptReproduction(
         return false;
     }
 
-    FeedingIntent intent{};
-    intent.request_eat = true;
-    intent.reach = 1.5;
-    intent.rate = 8.0;
-    registry.emplace_or_replace<FeedingIntent>(child_entity, intent);
-    registry.emplace_or_replace<HerbivoreTag>(child_entity);
-
     // Position near parents
     auto& child_transform = registry.get<TransformComponent>(child_entity);
     const Vec3 midpoint = (transform_a.position + view.get<TransformComponent>(parent_b).position) * 0.5;
@@ -384,6 +426,9 @@ bool ReproductionSystem::AttemptReproduction(
     }
     if (auto* fitness_b = registry.try_get<FitnessComponent>(parent_b)) {
         fitness_b->offspring_count++;
+    }
+    if (auto* counters = registry.ctx().find<PopulationEventCounters>()) {
+        ++counters->births_total;
     }
 
     if (auto* telemetry_ctx = registry.ctx().find<TelemetryContext>()) {

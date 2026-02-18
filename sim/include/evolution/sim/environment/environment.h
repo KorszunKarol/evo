@@ -230,10 +230,19 @@ public:
      * @param climate_mult double Climate multiplier (day/night/seasonal).
      */
     void regenerate_by_biome(double dt,
-                             const BiomeMap& biome_map,
-                             const std::array<float, 4>& regen_rates,
-                             const std::array<float, 4>& baselines,
-                             double climate_mult) noexcept;
+                              const BiomeMap& biome_map,
+                              const std::array<float, 4>& regen_rates,
+                              const std::array<float, 4>& baselines,
+                              double climate_mult) noexcept;
+
+    /**
+     * @brief Precomputes a per-cell biome index cache for hot regeneration loops.
+     *
+     * @param biome_map const BiomeMap& Biome map used to classify each soil cell.
+     * @note Biomes are static in the current simulation; callers should invoke this once
+     *       during environment initialization.
+     */
+    void precompute_biome_indices(const BiomeMap& biome_map) noexcept;
 
     /**
      * @brief Computes the arithmetic mean of nutrient values.
@@ -250,6 +259,8 @@ private:
     double inv_cell_size_{1.0};
     std::vector<float> nutrients_{};
     std::vector<float> scratch_{};
+    std::vector<std::uint8_t> biome_idx_cache_{};
+    bool biome_idx_cache_valid_{false};
 };
 
 /**
@@ -616,16 +627,13 @@ void evolution::sim::PlantSpatialIndex::for_each_in_radius(entt::registry& regis
                 continue;
             }
             for (const entt::entity entity : it->second) {
-                if (!registry.valid(entity)) {
-                    continue;
-                }
                 const auto* transform = registry.try_get<TransformComponent>(entity);
                 const auto* plant = registry.try_get<struct PlantComponent>(entity);
                 if (transform == nullptr || plant == nullptr || !plant->alive) {
                     continue;
                 }
                 const Vec3 delta = transform->position - position;
-                const double dist_sq = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+                const double dist_sq = delta.x * delta.x + delta.z * delta.z;
                 if (dist_sq <= radius_sq) {
                     func(entity, dist_sq);
                 }
@@ -633,5 +641,3 @@ void evolution::sim::PlantSpatialIndex::for_each_in_radius(entt::registry& regis
         }
     }
 }
-
-
